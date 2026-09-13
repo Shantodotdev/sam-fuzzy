@@ -2,6 +2,10 @@
 name = "sam-fuzzy"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["KR Shanto"]
+description = "Blazing-fast terminal media explorer for SamOnline (DhakaFlix) FTP servers"
+repository = "https://github.com/Shantodotdev/sam-fuzzy"
 
 [dependencies]
 ratatui = "0.29"
