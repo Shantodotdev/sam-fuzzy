@@ -26,13 +26,9 @@ Every release comes bundled as a self-contained executable with the full 104,650
 
 | Operating System | Architecture | Package Format | Direct Download |
 |---|---|---|---|
-| **Linux** | x86_64 (glibc 2.31+) | `.tar.gz` | [Download](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-linux-x86_64.tar.gz) |
-| **Linux (Universal)** | x86_64 Static (musl) | `.tar.gz` | [Download](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-linux-x86_64-musl.tar.gz) |
-| **macOS** | Apple Silicon (M1/M2/M3/M4) | `.tar.gz` | [Download](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-macos-arm64.tar.gz) |
-| **macOS** | Intel x86_64 | `.tar.gz` | [Download](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-macos-x86_64.tar.gz) |
-| **Windows** | x86_64 (Windows 10/11) | `.zip` | [Download](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-windows-x86_64.zip) |
-
-All releases include SHA-256 verification checksums on the [GitHub Releases Page](https://github.com/Shantodotdev/sam-fuzzy/releases).
+| **Windows** | x86_64 (Windows 10/11) | `.exe` (Standalone) | [Download `sam-fuzzy-windows-x86_64.exe`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-windows-x86_64.exe) |
+| **macOS** | Apple Silicon (M1/M2/M3/M4) | `.tar.gz` | [Download `sam-fuzzy-macos-arm64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-macos-arm64.tar.gz) |
+| **Linux** | x86_64 | `.tar.gz` | [Download `sam-fuzzy-linux-x86_64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-linux-x86_64.tar.gz) |
 
 ---
 

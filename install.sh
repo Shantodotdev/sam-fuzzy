@@ -27,7 +27,7 @@ case "$OS" in
     ;;
   *)
     echo "Error: Unsupported operating system: $OS" >&2
-    echo "On Windows, please download sam-fuzzy-windows-x86_64.zip from: https://github.com/${REPO}/releases" >&2
+    echo "On Windows, please download sam-fuzzy-windows-x86_64.exe from: https://github.com/${REPO}/releases" >&2
     exit 1
     ;;
 esac
