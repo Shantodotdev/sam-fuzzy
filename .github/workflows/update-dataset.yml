@@ -1,0 +1,64 @@
+name: Update Media Dataset
+
+on:
+  schedule:
+    # Run on the 1st of every month at 03:00 UTC
+    - cron: '0 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-dataset:
+    name: Crawl and Update Dataset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Refresh file sizes and dataset
+        run: |
+          python3 scripts/fetch_file_sizes.py
+
+      - name: Recompress dataset with gzip level 9
+        run: |
+          python3 -c "
+          import gzip
+          with open('data/sam_media.json', 'rb') as f_in:
+              data = f_in.read()
+          with gzip.open('data/sam_media.json.gz', 'wb', compresslevel=9) as f_out:
+              f_out.write(data)
+          print('Compressed data/sam_media.json.gz successfully!')
+          "
+
+      - name: Validate dataset with tests
+        run: cargo test --all-targets
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(data): sync DhakaFlix media catalog and refresh compressed index"
+          title: "chore(data): sync DhakaFlix media catalog and refresh compressed index"
+          body: |
+            Automated monthly refresh of the DhakaFlix / SamOnline media catalog.
+            
+            - Synced metadata, resolutions, and file sizes across servers 7, 14, and 12.
+            - Recompressed `data/sam_media.json.gz` for standalone binary embedding.
+            - Validated all unit, fuzzy ranking, and integration tests.
+          branch: "chore/update-dataset"
+          delete-branch: true
