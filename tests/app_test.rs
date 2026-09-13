@@ -212,6 +212,42 @@ fn test_result_list_aligns_single_and_double_digit_filenames() {
 }
 
 #[test]
+fn test_result_list_renders_right_aligned_resolution_only() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use sam_fuzzy::ui::components::ResultListWidget;
+
+    let engine = SearchEngine::new(sample_items());
+    let app = App::new(engine);
+
+    let area = Rect::new(0, 0, 70, 5);
+    let mut buf = Buffer::empty(area);
+    let widget = ResultListWidget { app: &app };
+    widget.render(area, &mut buf);
+
+    let mut row_strings = Vec::new();
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell((x, y)) {
+                row.push_str(cell.symbol());
+            }
+        }
+        row_strings.push(row);
+    }
+
+    // Check row 0 (Batman Begins, 1080p)
+    let batman_row = row_strings.iter().find(|r| r.contains("Batman Begins")).unwrap();
+    // Must contain 1080p at the far right
+    assert!(batman_row.ends_with("1080p ") || batman_row.contains("1080p"));
+    // Must NOT contain size badges or category tags
+    assert!(!batman_row.contains("2.10 GB"));
+    assert!(!batman_row.contains("English Movies"));
+    assert!(!batman_row.contains("•"));
+}
+
+#[test]
 fn test_inspector_widget_simplified_rendering() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;

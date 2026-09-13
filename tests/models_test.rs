@@ -180,3 +180,30 @@ fn test_display_title_strips_mkv_and_extensions() {
 
     assert_eq!(item.display_title(), "Squid Game S01E01");
 }
+
+#[test]
+fn test_clean_resolution_extraction() {
+    let make_item = |quality: &str, filename: &str| MediaItem {
+        id: 1,
+        title: "Test".to_string(),
+        year: None,
+        quality: quality.to_string(),
+        category: "English".to_string(),
+        filename: filename.to_string(),
+        is_file: true,
+        url: "http://example.com/test.mkv".to_string(),
+        folder_url: "http://example.com/".to_string(),
+        server: "DHAKA-FLIX-7".to_string(),
+        path: "DHAKA-FLIX-7/test.mkv".to_string(),
+        size: None,
+    };
+
+    assert_eq!(make_item("1080p / WEBRip / HEVC", "movie.mkv").clean_resolution(), Some("1080p"));
+    assert_eq!(make_item("720p / BluRay / x264", "movie.mkv").clean_resolution(), Some("720p"));
+    assert_eq!(make_item("Standard", "movie_2160p_uhd.mkv").clean_resolution(), Some("4K"));
+    assert_eq!(make_item("4K / REMUX", "movie.mkv").clean_resolution(), Some("4K"));
+    assert_eq!(make_item("576p / DVDRip", "movie.mkv").clean_resolution(), Some("576p"));
+    assert_eq!(make_item("480p / HEVC", "movie.mkv").clean_resolution(), Some("480p"));
+    assert_eq!(make_item("360p", "movie.mkv").clean_resolution(), Some("360p"));
+    assert_eq!(make_item("DVDRip / x264", "movie.mkv").clean_resolution(), None);
+}

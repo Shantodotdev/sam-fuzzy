@@ -139,6 +139,7 @@ impl<'a> Widget for ResultListWidget<'a> {
             selected.saturating_sub(visible_height / 2)
         };
 
+        let inner_width = inner_area.width as usize;
         let idx_width = self.app.results.len().to_string().len();
 
         let visible_items = self.app.results.iter().skip(scroll_top).take(visible_height);
@@ -161,25 +162,43 @@ impl<'a> Widget for ResultListWidget<'a> {
             // formatted without dot and followed by a single space so all filenames start
             // at the exact same horizontal alignment column.
             let index_str = format!("{:>width$} ", current_idx + 1, width = idx_width);
+            let prefix_char_count = 3 + index_str.chars().count();
             line_spans.push(Span::styled(index_str, style_index(is_selected)));
 
-            // Formatted title with optional release year
+            // Resolution tag (e.g. 1080p, 720p, 4K) right-aligned at the far right edge of the list pane
+            let res_tag = res.item.clean_resolution();
+            let (res_str, res_char_count) = if let Some(r) = res_tag {
+                (format!("{:>5} ", r), 6)
+            } else {
+                (String::new(), 0)
+            };
+
+            // Calculate available columns for the title
+            let available_title = inner_width.saturating_sub(prefix_char_count + res_char_count);
             let display_title = res.item.display_title();
+            let title_chars: Vec<char> = display_title.chars().collect();
+            let title_len = title_chars.len();
+
+            let (visible_chars, visible_len, is_truncated) = if title_len > available_title {
+                let take_count = available_title.saturating_sub(1);
+                (&title_chars[..take_count], take_count + 1, true)
+            } else {
+                (&title_chars[..], title_len, false)
+            };
+
             let title_style = if is_selected {
                 Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(COLOR_WHITE)
             };
 
-            // Character-level match highlighting.
-            // Uses a HashSet for O(1) lookup per character to color matched runes.
+            // Character-level match highlighting
             if res.indices.is_empty() {
-                line_spans.push(Span::styled(display_title, title_style));
+                let s: String = visible_chars.iter().collect();
+                line_spans.push(Span::styled(s, title_style));
             } else {
-                let chars: Vec<char> = display_title.chars().collect();
                 let match_set: std::collections::HashSet<u32> = res.indices.iter().cloned().collect();
-
-                for (char_idx, &ch) in chars.iter().enumerate() {
+                for (char_idx, &ch) in visible_chars.iter().enumerate() {
                     if match_set.contains(&(char_idx as u32)) {
                         line_spans.push(Span::styled(ch.to_string(), style_highlight_match()));
                     } else {
@@ -188,21 +207,20 @@ impl<'a> Widget for ResultListWidget<'a> {
                 }
             }
 
-            // Quality tag (e.g. 1080p, 720p, 2160p)
-            if !res.item.quality.is_empty() && res.item.quality != "Standard" {
-                line_spans.push(Span::raw("  "));
-                line_spans.push(Span::styled(format!("[{}]", res.item.quality), style_badge_cyan()));
+            if is_truncated {
+                line_spans.push(Span::styled("…", style_dim()));
             }
 
-            // File size badge (e.g. 954.1 MB, 1.42 GB)
-            if let Some(size) = &res.item.size {
-                line_spans.push(Span::raw("  "));
-                line_spans.push(Span::styled(format!("[{}]", size), style_badge_green()));
+            // Fill padding spaces to push the resolution tag flush against the right side
+            let padding_spaces = inner_width.saturating_sub(prefix_char_count + visible_len + res_char_count);
+            if padding_spaces > 0 {
+                line_spans.push(Span::styled(" ".repeat(padding_spaces), title_style));
             }
 
-            // Category tag
-            line_spans.push(Span::raw("  "));
-            line_spans.push(Span::styled(format!("• {}", res.item.category), style_dim()));
+            // Right-aligned resolution tag
+            if !res_str.is_empty() {
+                line_spans.push(Span::styled(res_str, style_badge_cyan()));
+            }
 
             // Apply selected row background highlight
             let mut row = Line::from(line_spans);

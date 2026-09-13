@@ -116,6 +116,35 @@ impl MediaItem {
             "DIR"
         }
     }
+
+    /// Extracts a normalized resolution label (e.g. "4K", "1080p", "720p", "576p", "480p", "360p")
+    /// from the item's quality profile or physical filename.
+    pub fn clean_resolution(&self) -> Option<&'static str> {
+        let q_lower = self.quality.to_lowercase();
+        let f_lower = self.filename.to_lowercase();
+
+        if q_lower.contains("2160")
+            || q_lower.contains("4k")
+            || q_lower.contains("uhd")
+            || f_lower.contains("2160")
+            || f_lower.contains("4k")
+            || f_lower.contains("uhd")
+        {
+            Some("4K")
+        } else if q_lower.contains("1080") || f_lower.contains("1080") {
+            Some("1080p")
+        } else if q_lower.contains("720") || f_lower.contains("720") {
+            Some("720p")
+        } else if q_lower.contains("576") || f_lower.contains("576") {
+            Some("576p")
+        } else if q_lower.contains("480") || f_lower.contains("480") {
+            Some("480p")
+        } else if q_lower.contains("360") || f_lower.contains("360") {
+            Some("360p")
+        } else {
+            None
+        }
+    }
 }
 
 /// Natural alphanumeric ordering comparator (e.g. "S01E02" < "S01E10").
