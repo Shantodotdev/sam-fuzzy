@@ -323,3 +323,30 @@ fn test_banner_widget_simplified_rendering() {
     assert!(!content.contains("MATCHES:"));
     assert!(!content.contains("HOSTS:"));
 }
+
+#[test]
+fn test_background_search_worker() {
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+
+    app.spawn_search_worker();
+
+    // Type a search query asynchronously
+    app.on_key_char('b');
+    app.on_key_char('a');
+    app.on_key_char('t');
+
+    // Poll until the worker returns results
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        app.poll_search_results();
+        if app.results.len() == 1 {
+            break;
+        }
+    }
+
+    assert_eq!(app.query, "bat");
+    assert_eq!(app.results.len(), 1);
+    assert_eq!(app.results[0].item.title, "Batman Begins");
+}
+

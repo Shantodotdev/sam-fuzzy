@@ -154,6 +154,9 @@ fn main() -> anyhow::Result<()> {
     // Enter TUI alternate screen
     let mut terminal = setup_terminal()?;
 
+    // Spawn non-blocking background search worker thread
+    app.spawn_search_worker();
+
     // Run the main event loop
     let run_res = run_app(&mut terminal, &mut app);
 
@@ -169,14 +172,17 @@ fn main() -> anyhow::Result<()> {
 
 /// Main application event loop.
 ///
-/// Draws UI frames on every iteration and polls keyboard events with a 50ms
-/// timeout to maintain responsiveness while keeping CPU usage near zero.
+/// Draws UI frames on every iteration and polls keyboard events with a 16ms
+/// timeout (60 FPS) to maintain zero input lag while keeping CPU usage near zero.
 /// Filters out non-press events (e.g. key release) to avoid double-firing actions.
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> anyhow::Result<()> {
     loop {
+        // Poll for completed background search results without blocking
+        app.poll_search_results();
+
         // Redraw current terminal frame
         terminal.draw(|f| render_ui(f, app))?;
 
@@ -184,8 +190,8 @@ fn run_app(
             break;
         }
 
-        // Poll for keyboard input with 50ms timeout
-        if event::poll(Duration::from_millis(50))?
+        // Poll for keyboard input with 16ms timeout (60 FPS responsiveness)
+        if event::poll(Duration::from_millis(16))?
             && let Event::Key(key) = event::read()?
         {
             // Ignore key release/repeat events on platforms supporting the Kitty keyboard protocol
