@@ -1,20 +1,21 @@
 # SAM-FUZZY ◈ SamOnline Millisecond Media Explorer
 
-A blazing-fast, cyberpunk terminal user interface (TUI) for searching movies, web series, Bengali films, foreign cinema, and anime on **SamOnline (DhakaFlix)** FTP servers using millisecond fuzzy matching (like `fzf`).
+A blazing-fast, cyberpunk terminal user interface (TUI) for searching movies, web series, Bengali films, foreign cinema, and anime on **SamOnline (DhakaFlix)** FTP servers using parallel multi-core fuzzy matching (like `fzf`).
 
-Built with **Rust**, **Ratatui**, **Crossterm**, and **Nucleo-Matcher**, styled with the **Blacksparrow** pink/maroon cybernetic aesthetic.
+Built with **Rust**, **Ratatui**, **Crossterm**, **Rayon**, and **Nucleo-Matcher**, styled with the **Blacksparrow** pink/maroon cybernetic aesthetic.
 
 ---
 
 ## Features
 
-- ⚡ **Sub-Millisecond Search**: Uses `nucleo-matcher` (the Helix/Zed fuzzy engine) to filter and rank across **38,000+** media titles in single-digit milliseconds.
-- 🎨 **Blacksparrow Aesthetic**: Cyberpunk hot pink (`#ff007f`), maroon (`#c7005f`), neon green, and cyan palette with ASCII banner and live telemetry stats.
+- ⚡ **Zero-Lag Search (<10ms)**: Uses a multi-tiered search architecture with 64-bit character presence bitmasks for sub-nanosecond rejection, `rayon` parallel multi-core SIMD scoring, and a dedicated non-blocking background worker thread running at locked 60 FPS.
+- 🎬 **104,650+ Media Items Indexed**: Complete mirror dataset of all SamOnline DhakaFlix servers (7 / 14 / 12) with accurate human-readable file sizes (MB/GB) and normalized resolutions (`4K`, `1080p`, `720p`, etc.).
+- 🔢 **Clean Sequential Indexing & Natural Sorting**: Features 1-based index numbers right-aligned without dots for perfect column alignment, and natural alphanumeric sorting (`natural_cmp`) so multi-season series and episodes (`S01E02` before `S01E10`) are sequenced logically.
+- 📐 **Streamlined Dual-Pane View**: Minimalist search results list with flush right-aligned resolution badges alongside a clean, focused Inspector panel displaying release year, quality, file size, category, server mirror, and directory hierarchy with automatic text wrapping.
 - 🌐 **Instant Browser Launch**: Press `Enter` on any title to open its DhakaFlix stream/player or folder directly in your browser.
-- 🎬 **MPV / VLC Integration**: Press `Alt+P` or `F3` to stream videos directly in your favorite desktop player.
-- 📋 **One-Key Clipboard**: Press `Alt+C` or `F2` to copy the direct streaming HTTP link.
-- 🗂️ **Categorical Tabs**: Instantly switch between `All`, `English`, `Bangla`, `Korean`, `Chinese/Japanese`, `Foreign`, `3D`, `Files Only`, and `Folders Only` with `Tab` / `Shift+Tab`.
-- 📁 **100% Self-Contained Local Dataset**: Bundles `data/sam_media.json` (38,368 items extracted from Blacksparrow's SamOnline crawl).
+- 🎥 **MPV / VLC Integration**: Press `Alt+P` or `F3` to stream videos directly in your favorite desktop player.
+- 📋 **One-Key Clipboard**: Press `Alt+C`, `Ctrl+Y`, or `F2` to copy direct streaming HTTP links.
+- 🗂️ **Categorical Navigation**: Instantly switch between `All`, `English`, `TV Series`, `Korean`, `Hindi`, and `Animation` tabs with `Tab` / `Shift+Tab`.
 
 ---
 
@@ -38,17 +39,12 @@ Built with **Rust**, **Ratatui**, **Crossterm**, and **Nucleo-Matcher**, styled 
 
 ## Building and Running
 
-### Running in Development
-```bash
-cargo run
-```
-
 ### Running the Optimized Release Binary
 ```bash
 cargo run --release
 ```
 
-Or run the compiled binary directly:
+Or execute the compiled binary directly:
 ```bash
 ./target/release/sam-fuzzy
 ```
@@ -59,8 +55,8 @@ Usage: sam-fuzzy [OPTIONS]
 
 Options:
   -d, --data <DATA>          Path to sam_media.json dataset (defaults to data/sam_media.json)
-  -q, --query <QUERY>        Initial search query (e.g. -q "dark knight")
-  -c, --category <CATEGORY>  Initial category filter (e.g. -c "Bangla")
+  -q, --query <QUERY>        Initial search query (e.g. -q "witcher")
+  -c, --category <CATEGORY>  Initial category filter (e.g. -c "Korean")
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -69,8 +65,8 @@ Options:
 
 ## Testing
 
-Run tests with `cargo-nextest`:
+Run the test suite with `cargo-nextest`:
 ```bash
 cargo nextest run
 ```
-All 16 unit, state-machine, fuzzy performance, and real-dataset integration tests run in ~0.3 seconds.
+All 27 unit, state-machine, fuzzy performance, and real-dataset integration tests pass in ~1 second.
