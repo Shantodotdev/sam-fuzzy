@@ -50,15 +50,12 @@ jobs:
         run: |
           strip target/${{ matrix.target }}/release/sam-fuzzy || true
 
-      - name: Package Unix archive
+      - name: Prepare Unix binary
         if: "!matrix.is_windows"
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/sam-fuzzy dist/
-          cp README.md LICENSE dist/
-          tar -czvf ${{ matrix.artifact_name }}.tar.gz -C dist sam-fuzzy README.md LICENSE
+          cp target/${{ matrix.target }}/release/sam-fuzzy ${{ matrix.artifact_name }}
 
-      - name: Prepare Windows executable
+      - name: Prepare Windows binary
         if: matrix.is_windows
         shell: pwsh
         run: |
@@ -69,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}.tar.gz
+          path: ${{ matrix.artifact_name }}
 
       - name: Upload Windows artifact
         if: matrix.is_windows
@@ -106,10 +103,10 @@ jobs:
 
             Zero-lag, 104k+ indexed items terminal media explorer for SamOnline FTP mirrors.
 
-            #### Download Packages:
-            - 🪟 **Windows**: [`sam-fuzzy-windows-x86_64.exe`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-windows-x86_64.exe) (Standalone executable, run directly)
-            - 🍏 **macOS (Apple Silicon)**: [`sam-fuzzy-macos-arm64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-macos-arm64.tar.gz)
-            - 🐧 **Linux (x86_64)**: [`sam-fuzzy-linux-x86_64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-linux-x86_64.tar.gz)
+            #### Standalone Binaries:
+            - 🪟 **Windows**: [`sam-fuzzy-windows-x86_64.exe`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-windows-x86_64.exe)
+            - 🍏 **macOS (Apple Silicon)**: [`sam-fuzzy-macos-arm64`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-macos-arm64)
+            - 🐧 **Linux (x86_64)**: [`sam-fuzzy-linux-x86_64`](https://github.com/Shantodotdev/sam-fuzzy/releases/download/${{ github.ref_name }}/sam-fuzzy-linux-x86_64)
 
             #### Quick Install (Linux & macOS):
             ```bash

@@ -24,11 +24,11 @@ curl -fsSL https://raw.githubusercontent.com/Shantodotdev/sam-fuzzy/main/install
 ### Pre-Compiled Standalone Binaries
 Every release comes bundled as a self-contained executable with the full 104,650+ media index embedded inside (~6.7 MB total). No installation, extra folders, or dependencies needed.
 
-| Operating System | Architecture | Package Format | Direct Download |
+| Operating System | Architecture | Binary Type | Direct Download |
 |---|---|---|---|
-| **Windows** | x86_64 (Windows 10/11) | `.exe` (Standalone) | [Download `sam-fuzzy-windows-x86_64.exe`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-windows-x86_64.exe) |
-| **macOS** | Apple Silicon (M1/M2/M3/M4) | `.tar.gz` | [Download `sam-fuzzy-macos-arm64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-macos-arm64.tar.gz) |
-| **Linux** | x86_64 | `.tar.gz` | [Download `sam-fuzzy-linux-x86_64.tar.gz`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-linux-x86_64.tar.gz) |
+| **Windows** | x86_64 (Windows 10/11) | Executable (`.exe`) | [Download `sam-fuzzy-windows-x86_64.exe`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-windows-x86_64.exe) |
+| **macOS** | Apple Silicon (M1/M2/M3/M4) | Executable (Mach-O) | [Download `sam-fuzzy-macos-arm64`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-macos-arm64) |
+| **Linux** | x86_64 | Executable (ELF) | [Download `sam-fuzzy-linux-x86_64`](https://github.com/Shantodotdev/sam-fuzzy/releases/latest/download/sam-fuzzy-linux-x86_64) |
 
 ---
 
