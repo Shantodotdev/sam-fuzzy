@@ -34,12 +34,20 @@ impl<'a> Widget for SearchBarWidget<'a> {
         let query_text = if self.app.query.is_empty() {
             vec![
                 Span::styled("❯ ", style_header()),
-                Span::styled("Type to fuzzy search movies, series, years, resolutions... (e.g. 'witcher 2025', 'dark knight 1080p')", style_dim()),
+                Span::styled(
+                    "Type to fuzzy search movies, series, years, resolutions... (e.g. 'witcher 2025', 'dark knight 1080p')",
+                    style_dim(),
+                ),
             ]
         } else {
             vec![
                 Span::styled("❯ ", style_header()),
-                Span::styled(&self.app.query, Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &self.app.query,
+                    Style::default()
+                        .fg(COLOR_WHITE)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("█", style_header()), // Active text cursor
             ]
         };
@@ -58,9 +66,7 @@ pub struct CategoryTabsWidget<'a> {
 
 impl<'a> Widget for CategoryTabsWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let mut spans = vec![
-            Span::styled(" CATEGORY: ", style_dim()),
-        ];
+        let mut spans = vec![Span::styled(" CATEGORY: ", style_dim())];
 
         // Render each category as a selectable pill
         for (i, &cat) in CATEGORIES.iter().enumerate() {
@@ -68,7 +74,10 @@ impl<'a> Widget for CategoryTabsWidget<'a> {
                 // Active tab: bold white text over maroon background
                 spans.push(Span::styled(
                     format!(" ◆ {} ", cat.to_uppercase()),
-                    Style::default().fg(COLOR_WHITE).bg(COLOR_MAROON).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(COLOR_WHITE)
+                        .bg(COLOR_MAROON)
+                        .add_modifier(Modifier::BOLD),
                 ));
             } else {
                 // Inactive tabs: dimmed text
@@ -102,7 +111,11 @@ impl<'a> Widget for ResultListWidget<'a> {
         // Title includes 1-based position and total match count
         let count_title = format!(
             " RESULTS ({}/{}) ",
-            if self.app.results.is_empty() { 0 } else { self.app.selected_index + 1 },
+            if self.app.results.is_empty() {
+                0
+            } else {
+                self.app.selected_index + 1
+            },
             self.app.results.len()
         );
 
@@ -119,8 +132,14 @@ impl<'a> Widget for ResultListWidget<'a> {
         if self.app.results.is_empty() {
             let empty_msg = Paragraph::new(vec![
                 Line::raw(""),
-                Line::from(Span::styled("  No matching media found on SamOnline.", style_dim())),
-                Line::from(Span::styled("  Try clearing or simplifying your fuzzy query.", style_dim())),
+                Line::from(Span::styled(
+                    "  No matching media found on SamOnline.",
+                    style_dim(),
+                )),
+                Line::from(Span::styled(
+                    "  Try clearing or simplifying your fuzzy query.",
+                    style_dim(),
+                )),
             ]);
             empty_msg.render(inner_area, buf);
             return;
@@ -142,7 +161,12 @@ impl<'a> Widget for ResultListWidget<'a> {
         let inner_width = inner_area.width as usize;
         let idx_width = self.app.results.len().to_string().len();
 
-        let visible_items = self.app.results.iter().skip(scroll_top).take(visible_height);
+        let visible_items = self
+            .app
+            .results
+            .iter()
+            .skip(scroll_top)
+            .take(visible_height);
 
         let mut lines = Vec::new();
         for (rel_idx, res) in visible_items.enumerate() {
@@ -187,7 +211,9 @@ impl<'a> Widget for ResultListWidget<'a> {
             };
 
             let title_style = if is_selected {
-                Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(COLOR_WHITE)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(COLOR_WHITE)
             };
@@ -197,7 +223,8 @@ impl<'a> Widget for ResultListWidget<'a> {
                 let s: String = visible_chars.iter().collect();
                 line_spans.push(Span::styled(s, title_style));
             } else {
-                let match_set: std::collections::HashSet<u32> = res.indices.iter().cloned().collect();
+                let match_set: std::collections::HashSet<u32> =
+                    res.indices.iter().cloned().collect();
                 for (char_idx, &ch) in visible_chars.iter().enumerate() {
                     if match_set.contains(&(char_idx as u32)) {
                         line_spans.push(Span::styled(ch.to_string(), style_highlight_match()));
@@ -212,7 +239,8 @@ impl<'a> Widget for ResultListWidget<'a> {
             }
 
             // Fill padding spaces to push the resolution tag flush against the right side
-            let padding_spaces = inner_width.saturating_sub(prefix_char_count + visible_len + res_char_count);
+            let padding_spaces =
+                inner_width.saturating_sub(prefix_char_count + visible_len + res_char_count);
             if padding_spaces > 0 {
                 line_spans.push(Span::styled(" ".repeat(padding_spaces), title_style));
             }
@@ -272,12 +300,17 @@ impl<'a> Widget for InspectorWidget<'a> {
             Span::styled(" Title    : ", style_header()),
             Span::styled(
                 item.display_title(),
-                Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(COLOR_WHITE)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
         // 2. Release Year
-        let year_str = item.year.map(|y| y.to_string()).unwrap_or_else(|| "N/A".to_string());
+        let year_str = item
+            .year
+            .map(|y| y.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
         lines.push(Line::from(vec![
             Span::styled(" Year     : ", style_dim()),
             Span::styled(year_str, style_badge_green()),
@@ -353,7 +386,9 @@ impl<'a> Widget for FooterWidget<'a> {
             let status_style = if is_err {
                 Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(COLOR_NEON_GREEN).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(COLOR_NEON_GREEN)
+                    .add_modifier(Modifier::BOLD)
             };
             spans.push(Span::styled(format!(" {} ", status_msg), status_style));
             spans.push(Span::styled(" │ ", style_dim()));

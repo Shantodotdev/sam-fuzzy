@@ -13,13 +13,13 @@ use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use sam_fuzzy::app::App;
 use sam_fuzzy::fuzzy::SearchEngine;
-use sam_fuzzy::models::load_dataset;
+use sam_fuzzy::models::{load_dataset, load_embedded_dataset};
 use sam_fuzzy::ui::render_ui;
 use std::io::{self, stdout};
 use std::path::PathBuf;
@@ -47,47 +47,44 @@ struct Args {
     category: Option<String>,
 }
 
-/// Resolves the absolute or relative path to the media dataset JSON file.
+/// Searches for candidate local dataset files (`.json.gz` or `.json`) on disk.
 ///
 /// Evaluates candidate locations in order of precedence:
-/// 1. User-supplied CLI argument (`--data <PATH>`).
-/// 2. Common relative directory paths (`data/sam_media.json`, `../data/sam_media.json`, `sam_media.json`).
-/// 3. Path relative to the binary's executable location (useful for standalone installs).
-fn resolve_data_path(custom: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    // 1. Explicit user override
-    if let Some(p) = custom {
-        if p.exists() {
-            return Ok(p);
-        }
-        anyhow::bail!("Specified dataset path not found: {:?}", p);
-    }
-
-    // 2. Relative candidate paths from current working directory
+/// 1. Common relative directory paths (`data/sam_media.json.gz`, `data/sam_media.json`, etc.)
+/// 2. Paths relative to the binary's executable directory.
+fn find_local_dataset() -> Option<PathBuf> {
     let candidates = [
+        PathBuf::from("data/sam_media.json.gz"),
         PathBuf::from("data/sam_media.json"),
+        PathBuf::from("../data/sam_media.json.gz"),
         PathBuf::from("../data/sam_media.json"),
+        PathBuf::from("sam_media.json.gz"),
         PathBuf::from("sam_media.json"),
     ];
 
     for c in &candidates {
         if c.exists() {
-            return Ok(c.clone());
+            return Some(c.clone());
         }
     }
 
-    // 3. Fallback: Check folder relative to the executable
     if let Ok(exe_path) = std::env::current_exe()
         && let Some(parent) = exe_path.parent()
     {
-        let exe_data = parent.join("data/sam_media.json");
-        if exe_data.exists() {
-            return Ok(exe_data);
+        for rel in &[
+            "data/sam_media.json.gz",
+            "data/sam_media.json",
+            "sam_media.json.gz",
+            "sam_media.json",
+        ] {
+            let p = parent.join(rel);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
 
-    anyhow::bail!(
-        "Could not find 'data/sam_media.json'. Ensure the local dataset exists or pass --data <PATH>"
-    )
+    None
 }
 
 /// Initializes the terminal in raw mode on an alternate screen.
@@ -130,10 +127,19 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Resolve dataset location and load items into memory
-    let data_path = resolve_data_path(args.data)?;
-    println!("Loading SamOnline media index from {:?}...", data_path);
-    let items = load_dataset(&data_path)
-        .context(format!("Failed to parse dataset from {:?}", data_path))?;
+    let items = if let Some(custom) = args.data {
+        if !custom.exists() {
+            anyhow::bail!("Specified dataset path not found: {:?}", custom);
+        }
+        println!("Loading SamOnline media index from {:?}...", custom);
+        load_dataset(&custom).context(format!("Failed to parse dataset from {:?}", custom))?
+    } else if let Some(data_path) = find_local_dataset() {
+        println!("Loading SamOnline media index from {:?}...", data_path);
+        load_dataset(&data_path).context(format!("Failed to parse dataset from {:?}", data_path))?
+    } else {
+        println!("Loading embedded SamOnline media index (104k+ items)...");
+        load_embedded_dataset().context("Failed to decompress embedded dataset")?
+    };
     println!("Loaded {} items into memory.", items.len());
 
     // Initialize fuzzy engine and application state
@@ -199,115 +205,115 @@ fn run_app(
                 continue;
             }
 
-                // Global keyboard event routing
-                match (key.modifiers, key.code) {
-                    // Quit: Ctrl+C or Ctrl+D
-                    (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                    | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+            // Global keyboard event routing
+            match (key.modifiers, key.code) {
+                // Quit: Ctrl+C or Ctrl+D
+                (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                    app.should_quit = true;
+                    break;
+                }
+
+                // Clear search query: Ctrl+U
+                (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
+                    app.on_clear_query();
+                }
+
+                // Emacs-style list navigation: Ctrl+N (Next), Ctrl+P (Previous)
+                (KeyModifiers::CONTROL, KeyCode::Char('n')) => {
+                    app.select_next();
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+                    app.select_prev();
+                }
+
+                // Copy streaming URL to clipboard: Alt+C, Ctrl+Y, Ctrl+L, or F2
+                (KeyModifiers::ALT, KeyCode::Char('c') | KeyCode::Char('C'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('y') | KeyCode::Char('Y'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('l') | KeyCode::Char('L'))
+                | (_, KeyCode::F(2)) => {
+                    app.copy_selected_link();
+                }
+
+                // Direct stream launch in MPV/VLC external player: Alt+P, Ctrl+O, or F3
+                (KeyModifiers::ALT, KeyCode::Char('p') | KeyCode::Char('P'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('o') | KeyCode::Char('O'))
+                | (_, KeyCode::F(3)) => {
+                    app.play_selected_video();
+                }
+
+                // Open parent folder listing in web browser: Alt+F or F4
+                (KeyModifiers::ALT, KeyCode::Char('f') | KeyCode::Char('F'))
+                | (_, KeyCode::F(4)) => {
+                    app.open_folder_in_browser();
+                }
+
+                // Toggle help modal: F1
+                (_, KeyCode::F(1)) => {
+                    app.toggle_help();
+                }
+
+                // [Enter] -> Primary action: Opens target URL directly in web browser!
+                (_, KeyCode::Enter) => {
+                    app.open_selected_in_browser();
+                }
+
+                // Vertical arrow navigation
+                (_, KeyCode::Up) => {
+                    app.select_prev();
+                }
+                (_, KeyCode::Down) => {
+                    app.select_next();
+                }
+
+                // Paging navigation (15 items per page)
+                (_, KeyCode::PageUp) => {
+                    app.select_prev_page(15);
+                }
+                (_, KeyCode::PageDown) => {
+                    app.select_next_page(15);
+                }
+
+                // Boundary navigation: Home (top) and End (bottom)
+                (_, KeyCode::Home) => {
+                    app.select_first();
+                }
+                (_, KeyCode::End) => {
+                    app.select_last();
+                }
+
+                // Category cycling: Tab (next category), Shift+Tab / BackTab (previous category)
+                (_, KeyCode::Tab) => {
+                    app.next_category();
+                }
+                (_, KeyCode::BackTab) => {
+                    app.prev_category();
+                }
+
+                // Backspace: delete previous character from search query
+                (_, KeyCode::Backspace) => {
+                    app.on_backspace();
+                }
+
+                // Escape: clear active query first; if already empty, quit application
+                (_, KeyCode::Esc) => {
+                    if !app.query.is_empty() {
+                        app.on_clear_query();
+                    } else {
                         app.should_quit = true;
                         break;
                     }
-
-                    // Clear search query: Ctrl+U
-                    (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
-                        app.on_clear_query();
-                    }
-
-                    // Emacs-style list navigation: Ctrl+N (Next), Ctrl+P (Previous)
-                    (KeyModifiers::CONTROL, KeyCode::Char('n')) => {
-                        app.select_next();
-                    }
-                    (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
-                        app.select_prev();
-                    }
-
-                    // Copy streaming URL to clipboard: Alt+C, Ctrl+Y, Ctrl+L, or F2
-                    (KeyModifiers::ALT, KeyCode::Char('c') | KeyCode::Char('C'))
-                    | (KeyModifiers::CONTROL, KeyCode::Char('y') | KeyCode::Char('Y'))
-                    | (KeyModifiers::CONTROL, KeyCode::Char('l') | KeyCode::Char('L'))
-                    | (_, KeyCode::F(2)) => {
-                        app.copy_selected_link();
-                    }
-
-                    // Direct stream launch in MPV/VLC external player: Alt+P, Ctrl+O, or F3
-                    (KeyModifiers::ALT, KeyCode::Char('p') | KeyCode::Char('P'))
-                    | (KeyModifiers::CONTROL, KeyCode::Char('o') | KeyCode::Char('O'))
-                    | (_, KeyCode::F(3)) => {
-                        app.play_selected_video();
-                    }
-
-                    // Open parent folder listing in web browser: Alt+F or F4
-                    (KeyModifiers::ALT, KeyCode::Char('f') | KeyCode::Char('F'))
-                    | (_, KeyCode::F(4)) => {
-                        app.open_folder_in_browser();
-                    }
-
-                    // Toggle help modal: F1
-                    (_, KeyCode::F(1)) => {
-                        app.toggle_help();
-                    }
-
-                    // [Enter] -> Primary action: Opens target URL directly in web browser!
-                    (_, KeyCode::Enter) => {
-                        app.open_selected_in_browser();
-                    }
-
-                    // Vertical arrow navigation
-                    (_, KeyCode::Up) => {
-                        app.select_prev();
-                    }
-                    (_, KeyCode::Down) => {
-                        app.select_next();
-                    }
-
-                    // Paging navigation (15 items per page)
-                    (_, KeyCode::PageUp) => {
-                        app.select_prev_page(15);
-                    }
-                    (_, KeyCode::PageDown) => {
-                        app.select_next_page(15);
-                    }
-
-                    // Boundary navigation: Home (top) and End (bottom)
-                    (_, KeyCode::Home) => {
-                        app.select_first();
-                    }
-                    (_, KeyCode::End) => {
-                        app.select_last();
-                    }
-
-                    // Category cycling: Tab (next category), Shift+Tab / BackTab (previous category)
-                    (_, KeyCode::Tab) => {
-                        app.next_category();
-                    }
-                    (_, KeyCode::BackTab) => {
-                        app.prev_category();
-                    }
-
-                    // Backspace: delete previous character from search query
-                    (_, KeyCode::Backspace) => {
-                        app.on_backspace();
-                    }
-
-                    // Escape: clear active query first; if already empty, quit application
-                    (_, KeyCode::Esc) => {
-                        if !app.query.is_empty() {
-                            app.on_clear_query();
-                        } else {
-                            app.should_quit = true;
-                            break;
-                        }
-                    }
-
-                    // Normal typing: append character to query and execute fuzzy search
-                    (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                        app.on_key_char(c);
-                    }
-
-                    _ => {}
                 }
+
+                // Normal typing: append character to query and execute fuzzy search
+                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                    app.on_key_char(c);
+                }
+
+                _ => {}
             }
         }
+    }
 
     Ok(())
 }

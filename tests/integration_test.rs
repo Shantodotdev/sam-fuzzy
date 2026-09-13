@@ -57,7 +57,10 @@ fn test_real_dataset_load_and_search() {
 
     // 4. Verify browser URL is a valid direct video file URL
     assert!(top_match.url.starts_with("http://172.16.50."));
-    assert!(top_match.is_file, "All items in dataset must be direct video files");
+    assert!(
+        top_match.is_file,
+        "All items in dataset must be direct video files"
+    );
 
     // 5. Test search: "squid game" on real dataset via App
     app.query = "squid game".to_string();
@@ -75,4 +78,25 @@ fn test_real_dataset_load_and_search() {
         squid_top.size.is_some(),
         "Media items from real dataset must have populated file size"
     );
+}
+
+#[test]
+fn test_embedded_dataset_real_search() {
+    use sam_fuzzy::models::load_embedded_dataset;
+
+    let items = load_embedded_dataset().expect("Embedded dataset must load cleanly");
+    let count = items.len();
+    assert!(
+        count >= 100_000,
+        "Embedded dataset must contain >= 100k items, got {}",
+        count
+    );
+
+    let engine = SearchEngine::new(items);
+    let results = engine.search("matrix", "All", 10);
+    assert!(
+        !results.is_empty(),
+        "Must find 'matrix' in embedded dataset"
+    );
+    assert!(results[0].item.title.to_lowercase().contains("matrix"));
 }

@@ -10,8 +10,8 @@
 
 use crate::models::MediaItem;
 use nucleo_matcher::{
-    pattern::{CaseMatching, Normalization, Pattern},
     Config, Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
 };
 use rayon::prelude::*;
 
@@ -63,8 +63,12 @@ impl SearchEngine {
         });
 
         let haystacks: Vec<String> = items.iter().map(|item| item.search_haystack()).collect();
-        let titles_lower: Vec<String> = items.iter().map(|item| item.title.to_lowercase()).collect();
-        let filenames_lower: Vec<String> = items.iter().map(|item| item.filename.to_lowercase()).collect();
+        let titles_lower: Vec<String> =
+            items.iter().map(|item| item.title.to_lowercase()).collect();
+        let filenames_lower: Vec<String> = items
+            .iter()
+            .map(|item| item.filename.to_lowercase())
+            .collect();
         let char_masks: Vec<u64> = haystacks.iter().map(|h| compute_char_mask(h)).collect();
 
         Self {
@@ -87,7 +91,12 @@ impl SearchEngine {
     }
 
     /// Performs parallel fuzzy search across all available CPU cores with tiered ranking.
-    pub fn search<'a>(&'a self, query: &'a str, category: &str, limit: usize) -> Vec<SearchResult<'a>> {
+    pub fn search<'a>(
+        &'a self,
+        query: &'a str,
+        category: &str,
+        limit: usize,
+    ) -> Vec<SearchResult<'a>> {
         let trimmed_query = query.trim();
 
         // Fast path: When query is empty, return category items immediately without running fuzzy matcher
@@ -143,7 +152,8 @@ impl SearchEngine {
                         // Tier 2: Title starts with the query keyword followed by a word boundary
                         else if title_lower.starts_with(&q_lower) {
                             let next_char = title_lower[q_lower.len()..].chars().next();
-                            let is_word_boundary = next_char.map(|c| !c.is_alphanumeric()).unwrap_or(true);
+                            let is_word_boundary =
+                                next_char.map(|c| !c.is_alphanumeric()).unwrap_or(true);
                             if is_word_boundary {
                                 smart_score += 50_000_000;
                             } else {
@@ -153,7 +163,10 @@ impl SearchEngine {
                             smart_score = smart_score.saturating_sub(length_penalty);
                         }
                         // Tier 3: Query appears as a standalone word anywhere in the title
-                        else if title_lower.split(|c: char| !c.is_alphanumeric()).any(|w| w == q_lower) {
+                        else if title_lower
+                            .split(|c: char| !c.is_alphanumeric())
+                            .any(|w| w == q_lower)
+                        {
                             smart_score += 30_000_000;
                             let length_penalty = title_lower.len().min(100) as u64 * 500;
                             smart_score = smart_score.saturating_sub(length_penalty);
@@ -164,7 +177,11 @@ impl SearchEngine {
                         }
                         // Tier 5: Multi-word query where all individual words appear in the title
                         else if q_words.len() > 1
-                            && q_words.iter().all(|w| title_lower.split(|c: char| !c.is_alphanumeric()).any(|tw| tw == *w))
+                            && q_words.iter().all(|w| {
+                                title_lower
+                                    .split(|c: char| !c.is_alphanumeric())
+                                    .any(|tw| tw == *w)
+                            })
                         {
                             smart_score += 20_000_000;
                         }
@@ -173,7 +190,10 @@ impl SearchEngine {
                             smart_score += 10_000_000;
                         }
                         // Tier 7: Standalone word match inside the filename
-                        else if filename_lower.split(|c: char| !c.is_alphanumeric()).any(|w| w == q_lower) {
+                        else if filename_lower
+                            .split(|c: char| !c.is_alphanumeric())
+                            .any(|w| w == q_lower)
+                        {
                             smart_score += 2_000_000;
                         }
 

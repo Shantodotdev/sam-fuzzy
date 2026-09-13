@@ -871,6 +871,7 @@ dependencies = [
  "arboard",
  "clap",
  "crossterm",
+ "flate2",
  "nucleo-matcher",
  "open",
  "ratatui",

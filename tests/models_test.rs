@@ -1,4 +1,4 @@
-use sam_fuzzy::models::{load_dataset_from_str, MediaItem};
+use sam_fuzzy::models::{MediaItem, load_dataset_from_str};
 
 #[test]
 fn test_media_item_display_title() {
@@ -154,11 +154,26 @@ fn test_load_dataset_from_str() {
 fn test_natural_cmp_series_ordering() {
     use sam_fuzzy::models::natural_cmp;
 
-    assert_eq!(natural_cmp("Squid Game S01E01", "Squid Game S01E02"), std::cmp::Ordering::Less);
-    assert_eq!(natural_cmp("Squid Game S01E02", "Squid Game S01E10"), std::cmp::Ordering::Less);
-    assert_eq!(natural_cmp("Squid Game S01E09", "Squid Game S01E10"), std::cmp::Ordering::Less);
-    assert_eq!(natural_cmp("Squid Game S01E10", "Squid Game S02E01"), std::cmp::Ordering::Less);
-    assert_eq!(natural_cmp("Squid Game S02E06", "Squid Game S03E01"), std::cmp::Ordering::Less);
+    assert_eq!(
+        natural_cmp("Squid Game S01E01", "Squid Game S01E02"),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        natural_cmp("Squid Game S01E02", "Squid Game S01E10"),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        natural_cmp("Squid Game S01E09", "Squid Game S01E10"),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        natural_cmp("Squid Game S01E10", "Squid Game S02E01"),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        natural_cmp("Squid Game S02E06", "Squid Game S03E01"),
+        std::cmp::Ordering::Less
+    );
 }
 
 #[test]
@@ -198,12 +213,82 @@ fn test_clean_resolution_extraction() {
         size: None,
     };
 
-    assert_eq!(make_item("1080p / WEBRip / HEVC", "movie.mkv").clean_resolution(), Some("1080p"));
-    assert_eq!(make_item("720p / BluRay / x264", "movie.mkv").clean_resolution(), Some("720p"));
-    assert_eq!(make_item("Standard", "movie_2160p_uhd.mkv").clean_resolution(), Some("4K"));
-    assert_eq!(make_item("4K / REMUX", "movie.mkv").clean_resolution(), Some("4K"));
-    assert_eq!(make_item("576p / DVDRip", "movie.mkv").clean_resolution(), Some("576p"));
-    assert_eq!(make_item("480p / HEVC", "movie.mkv").clean_resolution(), Some("480p"));
-    assert_eq!(make_item("360p", "movie.mkv").clean_resolution(), Some("360p"));
-    assert_eq!(make_item("DVDRip / x264", "movie.mkv").clean_resolution(), None);
+    assert_eq!(
+        make_item("1080p / WEBRip / HEVC", "movie.mkv").clean_resolution(),
+        Some("1080p")
+    );
+    assert_eq!(
+        make_item("720p / BluRay / x264", "movie.mkv").clean_resolution(),
+        Some("720p")
+    );
+    assert_eq!(
+        make_item("Standard", "movie_2160p_uhd.mkv").clean_resolution(),
+        Some("4K")
+    );
+    assert_eq!(
+        make_item("4K / REMUX", "movie.mkv").clean_resolution(),
+        Some("4K")
+    );
+    assert_eq!(
+        make_item("576p / DVDRip", "movie.mkv").clean_resolution(),
+        Some("576p")
+    );
+    assert_eq!(
+        make_item("480p / HEVC", "movie.mkv").clean_resolution(),
+        Some("480p")
+    );
+    assert_eq!(
+        make_item("360p", "movie.mkv").clean_resolution(),
+        Some("360p")
+    );
+    assert_eq!(
+        make_item("DVDRip / x264", "movie.mkv").clean_resolution(),
+        None
+    );
+}
+
+#[test]
+fn test_load_dataset_from_gz_stream() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use sam_fuzzy::models::load_dataset_from_reader;
+    use std::io::Write;
+
+    let sample_json = r#"[
+        {
+            "id": 101,
+            "title": "Compressed Movie",
+            "year": 2024,
+            "quality": "1080p",
+            "category": "English Movies",
+            "filename": "compressed.mkv",
+            "is_file": true,
+            "url": "http://172.16.50.7/compressed.mkv",
+            "folder_url": "http://172.16.50.7/",
+            "server": "DHAKA-FLIX-7",
+            "path": "DHAKA-FLIX-7/compressed.mkv",
+            "size": "2.40 GB"
+        }
+    ]"#;
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(sample_json.as_bytes()).unwrap();
+    let gz_bytes = encoder.finish().unwrap();
+
+    let items = load_dataset_from_reader(std::io::Cursor::new(gz_bytes)).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].title, "Compressed Movie");
+    assert_eq!(items[0].size.as_deref(), Some("2.40 GB"));
+}
+
+#[test]
+fn test_embedded_dataset_loading() {
+    use sam_fuzzy::models::load_embedded_dataset;
+
+    let items = load_embedded_dataset().expect("Embedded dataset must decompress cleanly");
+    assert!(
+        items.len() >= 100_000,
+        "Embedded dataset must contain over 100k items, found: {}",
+        items.len()
+    );
 }

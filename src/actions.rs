@@ -26,8 +26,12 @@ impl ActionOutcome {
     pub fn message(&self) -> String {
         match self {
             ActionOutcome::BrowserOpened(url) => format!("🌐 Opened in browser: {}", url),
-            ActionOutcome::CopiedToClipboard(url) => format!("📋 Copied link to clipboard: {}", url),
-            ActionOutcome::PlayerLaunched(player) => format!("🎬 Launched {} player in background", player),
+            ActionOutcome::CopiedToClipboard(url) => {
+                format!("📋 Copied link to clipboard: {}", url)
+            }
+            ActionOutcome::PlayerLaunched(player) => {
+                format!("🎬 Launched {} player in background", player)
+            }
             ActionOutcome::Error(err) => format!("⚠️ {}", err),
         }
     }
@@ -214,7 +218,9 @@ pub fn copy_to_clipboard(text: &str) -> ActionOutcome {
     if copied || osc52_sent {
         ActionOutcome::CopiedToClipboard(text.to_string())
     } else {
-        ActionOutcome::Error("Could not access system clipboard (tried wl-copy, xclip, xsel, arboard)".to_string())
+        ActionOutcome::Error(
+            "Could not access system clipboard (tried wl-copy, xclip, xsel, arboard)".to_string(),
+        )
     }
 }
 

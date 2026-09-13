@@ -7,11 +7,11 @@
 //! - Non-blocking background search worker thread management.
 //! - Global actions dispatch (browser launch, clipboard copy, video playback).
 
-use crate::actions::{copy_to_clipboard, launch_player, open_in_browser, ActionOutcome};
+use crate::actions::{ActionOutcome, copy_to_clipboard, launch_player, open_in_browser};
 use crate::fuzzy::SearchEngine;
 use crate::models::MediaItem;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -131,7 +131,8 @@ impl App {
                     }
 
                     let start = Instant::now();
-                    let matches = engine.search(&latest_req.query, latest_req.category, MAX_VISIBLE_RESULTS);
+                    let matches =
+                        engine.search(&latest_req.query, latest_req.category, MAX_VISIBLE_RESULTS);
                     let latency = start.elapsed();
 
                     let display_results: Vec<DisplayResult> = matches
@@ -207,7 +208,10 @@ impl App {
 
     /// Selects a specific category by name (case-insensitive).
     pub fn set_category_by_name(&mut self, name: &str) {
-        if let Some(pos) = CATEGORIES.iter().position(|&c| c.eq_ignore_ascii_case(name)) {
+        if let Some(pos) = CATEGORIES
+            .iter()
+            .position(|&c| c.eq_ignore_ascii_case(name))
+        {
             self.category_index = pos;
             self.selected_index = 0;
             self.perform_search();

@@ -33,8 +33,14 @@ fn test_action_outcome_format() {
 #[test]
 fn test_url_target_selection() {
     let item = sample_item();
-    assert_eq!(item.url, "http://172.16.50.7/DHAKA-FLIX-7/English%20Movies/Dune.mkv");
-    assert_eq!(item.folder_url, "http://172.16.50.7/DHAKA-FLIX-7/English%20Movies/");
+    assert_eq!(
+        item.url,
+        "http://172.16.50.7/DHAKA-FLIX-7/English%20Movies/Dune.mkv"
+    );
+    assert_eq!(
+        item.folder_url,
+        "http://172.16.50.7/DHAKA-FLIX-7/English%20Movies/"
+    );
 }
 
 #[test]
@@ -52,4 +58,3 @@ fn test_app_action_dispatch_on_selection() {
     assert!(outcome.is_some());
     assert!(app.status.is_some());
 }
-

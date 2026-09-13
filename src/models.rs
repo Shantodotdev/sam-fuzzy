@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 
 /// Represents a single media entry (movie, series season, episode, or folder)
@@ -88,7 +88,10 @@ impl MediaItem {
             "Hindi" => self.category.contains("Hindi") || self.category.contains("South Indian"),
             "Animation" => self.category.contains("Animation"),
             "Bangla" => self.category.contains("Bangla"),
-            "Foreign" => self.category.starts_with("Foreign Language Movies") || self.category.contains("Korean"),
+            "Foreign" => {
+                self.category.starts_with("Foreign Language Movies")
+                    || self.category.contains("Korean")
+            }
             "Chinese/Japanese" => {
                 self.category.contains("Chinese") || self.category.contains("Japanese")
             }
@@ -198,18 +201,43 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// Reads and deserializes the media dataset from a JSON file.
+/// Reads and deserializes the media dataset from an arbitrary reader.
 ///
-/// Uses buffered I/O to parse large datasets (50k+ items) in ~200ms.
+/// Transparently handles gzip-compressed streams if the magic bytes `0x1F, 0x8B` are detected.
+pub fn load_dataset_from_reader<R: Read>(mut reader: R) -> anyhow::Result<Vec<MediaItem>> {
+    let mut header = [0u8; 2];
+    let n = reader.read(&mut header)?;
+    if n == 2 && header == [0x1f, 0x8b] {
+        let chain = io::Cursor::new(header).chain(reader);
+        let gz = flate2::read::GzDecoder::new(chain);
+        let buf = BufReader::new(gz);
+        let items: Vec<MediaItem> = serde_json::from_reader(buf)?;
+        Ok(items)
+    } else {
+        let chain = io::Cursor::new(&header[..n]).chain(reader);
+        let buf = BufReader::new(chain);
+        let items: Vec<MediaItem> = serde_json::from_reader(buf)?;
+        Ok(items)
+    }
+}
+
+/// Reads and deserializes the media dataset from a JSON file (`.json` or `.json.gz`).
 pub fn load_dataset<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<MediaItem>> {
     let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    let items: Vec<MediaItem> = serde_json::from_reader(reader)?;
-    Ok(items)
+    load_dataset_from_reader(file)
 }
 
 /// Parses media dataset from an in-memory JSON string (primarily used in unit tests).
 pub fn load_dataset_from_str(json_str: &str) -> anyhow::Result<Vec<MediaItem>> {
     let items: Vec<MediaItem> = serde_json::from_str(json_str)?;
     Ok(items)
+}
+
+/// Static embedded compressed dataset (5.1 MB gzip).
+/// Bundled into the executable at compile time so `sam-fuzzy` works out of the box with zero dependencies.
+pub static EMBEDDED_DATASET_GZ: &[u8] = include_bytes!("../data/sam_media.json.gz");
+
+/// Loads the compiled-in embedded dataset when no external dataset is found.
+pub fn load_embedded_dataset() -> anyhow::Result<Vec<MediaItem>> {
+    load_dataset_from_reader(io::Cursor::new(EMBEDDED_DATASET_GZ))
 }

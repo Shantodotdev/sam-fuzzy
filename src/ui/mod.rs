@@ -15,9 +15,11 @@ pub mod theme;
 
 use crate::app::App;
 use banner::BannerWidget;
-use components::{CategoryTabsWidget, FooterWidget, InspectorWidget, ResultListWidget, SearchBarWidget};
-use ratatui::layout::{Constraint, Direction, Layout};
+use components::{
+    CategoryTabsWidget, FooterWidget, InspectorWidget, ResultListWidget, SearchBarWidget,
+};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout};
 
 /// Primary UI render entrypoint invoked on every terminal redraw frame.
 ///

@@ -60,7 +60,9 @@ pub fn style_selected_row() -> Style {
 
 /// Neon green badge style.
 pub fn style_badge_green() -> Style {
-    Style::default().fg(COLOR_NEON_GREEN).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(COLOR_NEON_GREEN)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Cyan badge style.
@@ -70,7 +72,9 @@ pub fn style_badge_cyan() -> Style {
 
 /// Yellow badge style.
 pub fn style_badge_yellow() -> Style {
-    Style::default().fg(COLOR_YELLOW).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(COLOR_YELLOW)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Muted secondary text style.

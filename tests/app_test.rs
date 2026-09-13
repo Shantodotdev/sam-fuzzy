@@ -150,8 +150,16 @@ fn test_result_list_renders_index_numbers_without_dot() {
     }
 
     // Row contains "1 Batman Begins" (or similar), ensuring no dot is used after the index number
-    assert!(row_strings.iter().any(|r| r.contains("1 ") && !r.contains("1. ")));
-    assert!(row_strings.iter().any(|r| r.contains("2 ") && !r.contains("2. ")));
+    assert!(
+        row_strings
+            .iter()
+            .any(|r| r.contains("1 ") && !r.contains("1. "))
+    );
+    assert!(
+        row_strings
+            .iter()
+            .any(|r| r.contains("2 ") && !r.contains("2. "))
+    );
 }
 
 #[test]
@@ -199,8 +207,14 @@ fn test_result_list_aligns_single_and_double_digit_filenames() {
     }
 
     // Find row with "Movie Episode 02" (index 2) and row with "Movie Episode 10" (index 10)
-    let row_single = row_strings.iter().find(|r| r.contains("Movie Episode 02")).unwrap();
-    let row_double = row_strings.iter().find(|r| r.contains("Movie Episode 10")).unwrap();
+    let row_single = row_strings
+        .iter()
+        .find(|r| r.contains("Movie Episode 02"))
+        .unwrap();
+    let row_double = row_strings
+        .iter()
+        .find(|r| r.contains("Movie Episode 10"))
+        .unwrap();
 
     let col_single = row_single.find("Movie Episode 02").unwrap();
     let col_double = row_double.find("Movie Episode 10").unwrap();
@@ -238,7 +252,10 @@ fn test_result_list_renders_right_aligned_resolution_only() {
     }
 
     // Check row 0 (Batman Begins, 1080p)
-    let batman_row = row_strings.iter().find(|r| r.contains("Batman Begins")).unwrap();
+    let batman_row = row_strings
+        .iter()
+        .find(|r| r.contains("Batman Begins"))
+        .unwrap();
     // Must contain 1080p at the far right
     assert!(batman_row.ends_with("1080p ") || batman_row.contains("1080p"));
     // Must NOT contain size badges or category tags
@@ -349,4 +366,3 @@ fn test_background_search_worker() {
     assert_eq!(app.results.len(), 1);
     assert_eq!(app.results[0].item.title, "Batman Begins");
 }
-
