@@ -30,7 +30,7 @@ jobs:
             is_windows: false
             use_musl: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             artifact_name: sam-fuzzy-macos-x86_64
             is_windows: false
           - target: aarch64-apple-darwin
