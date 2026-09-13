@@ -73,8 +73,8 @@ impl<'a> Widget for BannerWidget<'a> {
                 Span::styled("🎯 MATCHES: ", style_dim()),
                 Span::styled(format!("{}", self.app.results.len()), style_badge_yellow()),
                 Span::styled("   │   ", style_dim()),
-                Span::styled("🌐 HOST: ", style_dim()),
-                Span::styled("172.16.50.7 (DhakaFlix)", style_dim()),
+                Span::styled("🌐 HOSTS: ", style_dim()),
+                Span::styled("DhakaFlix (7 / 14 / 12)", style_dim()),
             ]));
 
             Paragraph::new(lines).render(area, buf);

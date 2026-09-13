@@ -1,16 +1,30 @@
-import urllib.request, re, urllib.parse, json, os, sys
+#!/usr/bin/env python3
+"""
+High-speed concurrent crawler for SamOnline FTP mirrors (DhakaFlix).
+Collects ONLY direct video files (.mkv, .mp4, .avi, .webm, .flv, .wmv).
+Extracts resolution (1080p, 720p, 2160p, 480p) STRICTLY from the filename.
+Excludes all directory / folder entries.
+"""
+
+import urllib.request
+import urllib.parse
+import re
+import json
+import os
+import sys
+import time
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-headers = {'User-Agent': 'Mozilla/5.0'}
+HEADERS = {'User-Agent': 'Mozilla/5.0'}
+VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.flv', '.wmv', '.vob', '.webm')
+SKIP_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.css', '.js', '.srt', '.sub', '.idx', '.nfo', '.txt', '.torrent', '.html', '.php'}
 
-skip_exts = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.css', '.js', '.srt', '.sub', '.idx', '.nfo', '.txt', '.torrent', '.html', '.php'}
-
-def fetch_dir(url):
+def fetch_dir(url, timeout=4):
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             html = resp.read().decode('utf-8', errors='ignore')
-        
         entries = []
         for href, text in re.findall(r'<a href=\"([^\"]+)\">([^<]+)</a>', html):
             if href.startswith('?') or href.startswith('/_h5ai') or href == '..' or href.startswith('http'):
@@ -22,195 +36,293 @@ def fetch_dir(url):
     except Exception:
         return []
 
-def clean_title_and_metadata(folder_name, file_name):
-    # Year detection
-    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', folder_name) or re.search(r'\b(19\d{2}|20\d{2})\b', file_name)
-    year = int(year_match.group(1)) if year_match else None
-    
-    qualities = []
-    text_for_qual = f'{folder_name} {file_name}'
-    for q in ['2160p', '4K', '1080p', '720p', '480p', 'BluRay', 'BRRip', 'WEBRip', 'WEB-DL', 'HDRip', 'HDTV', 'DVDRip', 'Dual Audio', 'Multi Audio', '3D', 'HEVC', 'x265', 'x264']:
-        if re.search(rf'\b{re.escape(q)}\b', text_for_qual, re.I):
-            qualities.append(q)
-            
-    raw = folder_name if folder_name else file_name
-    raw = raw.replace('.', ' ').replace('_', ' ')
-    
-    if year:
-        idx = raw.find(str(year))
-        if idx > 0:
-            title_candidate = raw[:idx].strip(' ()[]-_')
-        else:
-            title_candidate = raw
-    else:
-        title_candidate = re.sub(r'(720p|1080p|2160p|4k|bluray|webrip|web-dl|hdrip|dvdrip|hdtv).*', '', raw, flags=re.I)
-    
-    title_candidate = re.sub(r'\[.*?\]|\(.*?\)', '', title_candidate)
-    title_candidate = re.sub(r'\s+', ' ', title_candidate).strip(' -_')
-    
-    if not title_candidate or len(title_candidate) < 2:
-        title_candidate = folder_name if folder_name else file_name
-        title_candidate = title_candidate.replace('.', ' ').strip()
-        
-    return title_candidate, year, ' / '.join(qualities) if qualities else 'Standard'
+def clean_video_filename(filename):
+    """
+    Extracts title, year, and quality profile STRICTLY from the filename.
+    No resolution or codec tags are inherited from parent folder names.
+    """
+    base = filename
+    if '.' in base:
+        base = base[:base.rfind('.')]
 
-def create_item(url, is_file, category, server, folder_url=None):
+    # 1. Quality & Resolution tokens - STRICTLY FROM FILENAME
+    qualities = []
+    tag_patterns = [
+        ('2160p', r'\b(2160p|4k|uhd)\b'),
+        ('1080p', r'\b1080p\b'),
+        ('720p', r'\b720p\b'),
+        ('480p', r'\b480p\b'),
+        ('BluRay', r'\b(bluray|bdrip|brrip)\b'),
+        ('WEBRip', r'\b(webrip|web-dl|webdl)\b'),
+        ('HDRip', r'\bhdrip\b'),
+        ('DVDRip', r'\bdvdrip\b'),
+        ('HDTV', r'\bhdtv\b'),
+        ('Dual Audio', r'\b(dual[\s._-]?audio)\b'),
+        ('Multi Audio', r'\b(multi[\s._-]?audio)\b'),
+        ('3D', r'\b3d\b'),
+        ('HEVC', r'\b(hevc|x265)\b'),
+        ('x264', r'\bx264\b'),
+    ]
+    for label, pat in tag_patterns:
+        if re.search(pat, filename, re.IGNORECASE):
+            if label not in qualities:
+                qualities.append(label)
+
+    quality = ' / '.join(qualities) if qualities else 'Standard'
+
+    # 2. Release Year detection (1920 - 2029)
+    year = None
+    m_year = re.search(r'[\(\[\._\s](19\d\d|20\d\d)[\)\]\._\s]', filename)
+    if m_year:
+        year = int(m_year.group(1))
+
+    # 3. Clean human-readable title
+    clean = base.replace('.', ' ').replace('_', ' ')
+
+    # Check for Episode identifiers: S01E01, S1, EP01, etc.
+    m_ep = re.search(r'\b(S\d+E\d+|S\d+|EP\d+|E\d+)\b', clean, re.IGNORECASE)
+
+    if m_ep:
+        ep_code = m_ep.group(1).upper()
+        idx = clean.upper().find(ep_code)
+        title_part = clean[:idx].strip(' -_()[]')
+        title = f'{title_part} {ep_code}'.strip()
+    elif year:
+        idx = clean.find(str(year))
+        if idx > 0:
+            title = clean[:idx].strip(' -_()[]')
+        else:
+            title = clean
+    else:
+        title = re.sub(
+            r'\b(720p|1080p|2160p|4k|bluray|webrip|web-dl|hdrip|dvdrip|hdtv|x264|x265|hevc|aac|ac3|dts|remux).*',
+            '', clean, flags=re.IGNORECASE
+        )
+        title = title.strip(' -_()[]')
+
+    title = re.sub(r'\[.*?\]|\(.*?\)', '', title)
+    title = re.sub(r'\s+', ' ', title).strip(' -_')
+    if not title or len(title) < 2:
+        title = base
+
+    return title, year, quality
+
+def parse_direct_video_item(url, category, server):
     parsed = urllib.parse.urlparse(url)
     path = urllib.parse.unquote(parsed.path).strip('/')
     parts = path.split('/')
     file_name = parts[-1]
-    
+
     ext = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
-    if ext in skip_exts:
+    if ext not in VIDEO_EXTS:
         return None
-        
-    folder_name = parts[-2] if len(parts) >= 2 and is_file else parts[-1]
-    title, year, quality = clean_title_and_metadata(folder_name, file_name)
-    
-    f_url = folder_url if folder_url else (url if not is_file else url[:url.rfind('/') + 1])
-    
+
+    title, year, quality = clean_video_filename(file_name)
+    folder_url = url[:url.rfind('/') + 1]
+
     return {
         'title': title,
         'year': year,
         'quality': quality,
         'category': category,
         'filename': file_name,
-        'is_file': is_file,
+        'is_file': True,
         'url': url,
-        'folder_url': f_url,
+        'folder_url': folder_url,
         'server': server,
         'path': path
     }
 
+def crawl_folder_recursive(url, category, server, max_depth=3):
+    """Recursively crawls directories up to max_depth and returns direct video files."""
+    results = []
+    stack = [(url, 0)]
+    while stack:
+        curr_url, depth = stack.pop()
+        entries = fetch_dir(curr_url)
+        for entry_url, is_dir, name in entries:
+            if is_dir:
+                if depth < max_depth:
+                    stack.append((entry_url, depth + 1))
+            else:
+                if any(entry_url.lower().endswith(ext) for ext in VIDEO_EXTS):
+                    item = parse_direct_video_item(entry_url, category, server)
+                    if item:
+                        results.append(item)
+    return results
+
 def main():
-    print("Starting rapid indexer for 172.16.50.14, 172.16.50.12, and 172.16.50.8...")
-    new_items = []
-    series_folders = []
-    
-    # 1. 172.16.50.14 direct sections
-    direct_sections_14 = [
-        ('http://172.16.50.14/DHAKA-FLIX-14/KOREAN%20TV%20&%20WEB%20Series/', 'Foreign Language Movies / Korean Series', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/Animation%20Movies%20%281080p%29/', 'Animation Movies (1080p)', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/IMDb%20Top-250%20Movies/', 'IMDb Top-250 Movies', 'DHAKA-FLIX-14'),
-    ]
-    
-    # Nested year-based sections on 172.16.50.14
-    nested_roots_14 = [
-        ('http://172.16.50.14/DHAKA-FLIX-14/English%20Movies%20%281080p%29/', 'English Movies (1080p)', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/Hindi%20Movies/', 'Hindi Movies', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/Animation%20Movies/', 'Animation Movies', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/SOUTH%20INDIAN%20MOVIES/South%20Movies/', 'SOUTH INDIAN MOVIES / South Movies', 'DHAKA-FLIX-14'),
-        ('http://172.16.50.14/DHAKA-FLIX-14/SOUTH%20INDIAN%20MOVIES/Hindi%20Dubbed/', 'SOUTH INDIAN MOVIES / Hindi Dubbed', 'DHAKA-FLIX-14'),
-    ]
-    
-    # 2. 172.16.50.12 TV series roots
-    series_roots_12 = [
-        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%98%85%20%200%20%20%E2%80%94%20%209/', 'TV-WEB-Series', 'DHAKA-FLIX-12'),
-        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20L/', 'TV-WEB-Series', 'DHAKA-FLIX-12'),
-        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A6%20%20M%20%20%E2%80%94%20%20R/', 'TV-WEB-Series', 'DHAKA-FLIX-12'),
-        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A6%20%20S%20%20%E2%80%94%20%20Z/', 'TV-WEB-Series', 'DHAKA-FLIX-12'),
-    ]
-    
-    # 3. 172.16.50.8 Games & Software
-    games_roots_8 = [
-        ('http://172.16.50.8/DHAKA-FLIX-8/PC%20Games/', 'Games / PC Games', 'DHAKA-FLIX-8'),
-        ('http://172.16.50.8/DHAKA-FLIX-8/Console%20Games/', 'Games / Console Games', 'DHAKA-FLIX-8'),
-        ('http://172.16.50.8/DHAKA-FLIX-8/Software/', 'Software', 'DHAKA-FLIX-8'),
-    ]
-
-    # Fetch direct sections
-    for url, cat, srv in direct_sections_14:
-        print(f"Fetching {cat}...")
-        entries = fetch_dir(url)
-        print(f"  -> {len(entries)} items")
-        for u, is_dir, text in entries:
-            item = create_item(u, not is_dir, cat, srv)
-            if item:
-                new_items.append(item)
-            if is_dir:
-                series_folders.append((u, cat, srv))
-    
-    # Fetch nested roots (year subfolders) in parallel
-    for root_url, cat, srv in nested_roots_14:
-        print(f"Fetching nested {cat}...")
-        year_dirs = fetch_dir(root_url)
-        print(f"  Found {len(year_dirs)} year subfolders for {cat}")
-        
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            future_to_dir = {executor.submit(fetch_dir, yd[0]): yd for yd in year_dirs if yd[1]}
-            for future in as_completed(future_to_dir):
-                sub_entries = future.result()
-                for u, is_dir, text in sub_entries:
-                    item = create_item(u, not is_dir, cat, srv)
-                    if item:
-                        new_items.append(item)
-
-    # Fetch 172.16.50.12 TV Series in parallel
-    for sroot, cat, srv in series_roots_12:
-        print(f"Fetching {sroot}...")
-        series_dirs = fetch_dir(sroot)
-        print(f"  Found {len(series_dirs)} series in group")
-        for u, is_dir, text in series_dirs:
-            item = create_item(u, not is_dir, cat, srv)
-            if item:
-                new_items.append(item)
-            if is_dir:
-                series_folders.append((u, cat, srv))
-                
-    # Fetch 172.16.50.8 Games in parallel
-    for groot, cat, srv in games_roots_8:
-        print(f"Fetching {groot}...")
-        game_dirs = fetch_dir(groot)
-        print(f"  Found {len(game_dirs)} items in group")
-        for u, is_dir, text in game_dirs:
-            item = create_item(u, not is_dir, cat, srv)
-            if item:
-                new_items.append(item)
-
-    # Specifically expand Squid Game seasons and episodes so each episode is also searchable!
-    squid_targets = [sf for sf in series_folders if 'squid' in sf[0].lower()]
-    print(f"Expanding Squid Game episodes ({len(squid_targets)} folders)...")
-    for sf, cat, srv in squid_targets:
-        seasons = fetch_dir(sf)
-        for su, s_isdir, stext in seasons:
-            if s_isdir:
-                episodes = fetch_dir(su)
-                for eu, e_isdir, etext in episodes:
-                    item = create_item(eu, not e_isdir, cat, srv, sf)
-                    if item:
-                        new_items.append(item)
-
-    print(f"Total newly fetched media items: {len(new_items)}")
-    
-    # Load existing sam_media.json
-    existing_file = 'data/sam_media.json'
-    existing = []
+    print("=== SamOnline Direct Video File Crawler ===")
+    t_start = time.time()
+    all_files = []
     seen_urls = set()
-    if os.path.exists(existing_file):
-        with open(existing_file, 'r', encoding='utf-8') as f:
-            existing = json.load(f)
-            for it in existing:
-                seen_urls.add(it['url'])
-                
-    print(f"Existing items in {existing_file}: {len(existing)}")
-    
-    added_count = 0
-    for it in new_items:
-        if it['url'] not in seen_urls:
-            seen_urls.add(it['url'])
-            existing.append(it)
-            added_count += 1
-            
-    print(f"Added {added_count} new unique items! Total combined: {len(existing)}")
-    
-    # Re-assign continuous IDs
-    for i, it in enumerate(existing):
-        it['id'] = i + 1
-        
-    with open(existing_file, 'w', encoding='utf-8') as f:
-        json.dump(existing, f, indent=2, ensure_ascii=False)
-        
-    print(f"Successfully updated {existing_file}! Total: {len(existing)}")
+
+    # --- 1. Load Blacksparrow direct files from 172.16.50.7 ---
+    db_path = os.path.expanduser('~/.local/share/blacksparrow/blacksparrow.db')
+    if os.path.exists(db_path):
+        print("Reading 172.16.50.7 direct video files from blacksparrow.db...")
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT target_url FROM links WHERE crawl_id = 'crawl_1789221519881124'")
+        bs_urls = [r[0] for r in c.fetchall()]
+        bs_videos = [u for u in bs_urls if any(u.lower().endswith(ext) for ext in VIDEO_EXTS)]
+        print(f"Found {len(bs_videos)} video files in Blacksparrow DB for 172.16.50.7.")
+
+        for url in bs_videos:
+            if url in seen_urls:
+                continue
+            # Categorize based on path
+            cat = "English Movies"
+            if "Foreign Language Movies" in url:
+                if "Korean" in url:
+                    cat = "Foreign Language Movies / Korean"
+                elif "Chinese" in url:
+                    cat = "Foreign Language Movies / Chinese"
+                elif "Japanese" in url:
+                    cat = "Foreign Language Movies / Japanese"
+                else:
+                    cat = "Foreign Language Movies"
+            elif "Kolkata Bangla" in url:
+                cat = "Kolkata Bangla Movies"
+            elif "3D Movies" in url:
+                cat = "3D Movies"
+
+            item = parse_direct_video_item(url, cat, "DHAKA-FLIX-7")
+            if item:
+                all_files.append(item)
+                seen_urls.add(url)
+
+    print(f"Loaded {len(all_files)} files from 172.16.50.7. Now crawling 172.16.50.14...")
+
+    # --- 2. Crawl 172.16.50.14 Sections ---
+    # A. Year-nested movies
+    nested_sections_14 = [
+        ('http://172.16.50.14/DHAKA-FLIX-14/English%20Movies%20%281080p%29/', 'English Movies', 'DHAKA-FLIX-14'),
+        ('http://172.16.50.14/DHAKA-FLIX-14/Animation%20Movies/', 'Animation Movies', 'DHAKA-FLIX-14'),
+        ('http://172.16.50.14/DHAKA-FLIX-14/Hindi%20Movies/', 'Hindi Movies', 'DHAKA-FLIX-14'),
+        ('http://172.16.50.14/DHAKA-FLIX-14/SOUTH%20INDIAN%20MOVIES/South%20Movies/', 'South Indian Movies', 'DHAKA-FLIX-14'),
+        ('http://172.16.50.14/DHAKA-FLIX-14/SOUTH%20INDIAN%20MOVIES/Hindi%20Dubbed/', 'South Indian Movies / Hindi Dubbed', 'DHAKA-FLIX-14'),
+    ]
+
+    for root_url, cat, srv in nested_sections_14:
+        print(f"Fetching subfolders for {cat}...")
+        sub_dirs = fetch_dir(root_url)
+        print(f"  {len(sub_dirs)} subfolders found in {cat}.")
+
+        def process_sub(sub_tuple):
+            s_url, _, _ = sub_tuple
+            return crawl_folder_recursive(s_url, cat, srv, max_depth=2)
+
+        with ThreadPoolExecutor(max_workers=30) as ex:
+            futures = [ex.submit(process_sub, s) for s in sub_dirs]
+            for fut in as_completed(futures):
+                try:
+                    items = fut.result()
+                    for it in items:
+                        if it['url'] not in seen_urls:
+                            seen_urls.add(it['url'])
+                            all_files.append(it)
+                except Exception:
+                    pass
+
+    # B. Flat movie collections on 172.16.50.14
+    flat_sections_14 = [
+        ('http://172.16.50.14/DHAKA-FLIX-14/Animation%20Movies%20%281080p%29/', 'Animation Movies', 'DHAKA-FLIX-14'),
+        ('http://172.16.50.14/DHAKA-FLIX-14/IMDb%20Top-250%20Movies/', 'IMDb Top-250', 'DHAKA-FLIX-14'),
+    ]
+    for root_url, cat, srv in flat_sections_14:
+        print(f"Fetching collection: {cat}...")
+        movie_dirs = fetch_dir(root_url)
+        print(f"  {len(movie_dirs)} movies in {cat}.")
+
+        def process_movie(m_tuple):
+            m_url, is_dir, _ = m_tuple
+            if is_dir:
+                return crawl_folder_recursive(m_url, cat, srv, max_depth=1)
+            elif any(m_url.lower().endswith(ext) for ext in VIDEO_EXTS):
+                it = parse_direct_video_item(m_url, cat, srv)
+                return [it] if it else []
+            return []
+
+        with ThreadPoolExecutor(max_workers=30) as ex:
+            futures = [ex.submit(process_movie, m) for m in movie_dirs]
+            for fut in as_completed(futures):
+                try:
+                    for it in fut.result():
+                        if it['url'] not in seen_urls:
+                            seen_urls.add(it['url'])
+                            all_files.append(it)
+                except Exception:
+                    pass
+
+    # C. Korean TV & Web Series on 172.16.50.14
+    korean_root = 'http://172.16.50.14/DHAKA-FLIX-14/KOREAN%20TV%20&%20WEB%20Series/'
+    print("Fetching Korean TV & Web Series list...")
+    korean_series = fetch_dir(korean_root)
+    print(f"  Found {len(korean_series)} Korean series.")
+
+    def process_korean(s_tuple):
+        s_url, _, _ = s_tuple
+        return crawl_folder_recursive(s_url, 'Korean TV & Web Series', 'DHAKA-FLIX-14', max_depth=3)
+
+    with ThreadPoolExecutor(max_workers=40) as ex:
+        futures = [ex.submit(process_korean, s) for s in korean_series]
+        for fut in as_completed(futures):
+            try:
+                for it in fut.result():
+                    if it['url'] not in seen_urls:
+                        seen_urls.add(it['url'])
+                        all_files.append(it)
+            except Exception:
+                pass
+
+    print(f"Total direct files after 172.16.50.14: {len(all_files)}")
+
+    # --- 3. Crawl 172.16.50.12 TV Series ---
+    tv_sections_12 = [
+        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%98%85%20%200%20%20%E2%80%94%20%209/', 'TV Series', 'DHAKA-FLIX-12'),
+        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20L/', 'TV Series', 'DHAKA-FLIX-12'),
+        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A6%20%20M%20%20%E2%80%94%20%20R/', 'TV Series', 'DHAKA-FLIX-12'),
+        ('http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A0%20%20S%20%20%E2%80%94%20%20Z/', 'TV Series', 'DHAKA-FLIX-12'),
+    ]
+
+    print("Crawling 172.16.50.12 TV-WEB-Series (0-9, A-L, M-R, S-Z)...")
+    all_tv_series = []
+    for tv_root, cat, srv in tv_sections_12:
+        s_list = fetch_dir(tv_root)
+        print(f"  {len(s_list)} series in {tv_root.split('/')[-2]}")
+        for s in s_list:
+            all_tv_series.append((s[0], cat, srv))
+
+    def process_tv(tv_tuple):
+        s_url, cat, srv = tv_tuple
+        return crawl_folder_recursive(s_url, cat, srv, max_depth=3)
+
+    with ThreadPoolExecutor(max_workers=50) as ex:
+        futures = [ex.submit(process_tv, t) for t in all_tv_series]
+        for fut in as_completed(futures):
+            try:
+                for it in fut.result():
+                    if it['url'] not in seen_urls:
+                        seen_urls.add(it['url'])
+                        all_files.append(it)
+            except Exception:
+                pass
+
+    print(f"\nCompleted crawl in {time.time()-t_start:.1f}s.")
+    print(f"Total DIRECT VIDEO FILES collected: {len(all_files)}")
+
+    # Re-index unique IDs
+    for idx, item in enumerate(all_files, 1):
+        item['id'] = idx
+
+    # Save to data/sam_media.json
+    out_path = 'data/sam_media.json'
+    print(f"Writing dataset to {out_path}...")
+    with open(out_path, 'w') as f:
+        json.dump(all_files, f, indent=2)
+
+    print(f"Done! Saved {len(all_files)} direct video files to {out_path}.")
 
 if __name__ == '__main__':
     main()

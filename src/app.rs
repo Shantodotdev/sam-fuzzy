@@ -12,13 +12,12 @@ use std::time::{Duration, Instant};
 pub const CATEGORIES: &[&str] = &[
     "All",
     "English",
-    "Bangla",
+    "TV Series",
     "Korean",
-    "Chinese/Japanese",
-    "Foreign",
-    "3D",
-    "Files Only",
-    "Folders Only",
+    "Hindi",
+    "Animation",
+    "1080p",
+    "720p",
 ];
 
 /// Maximum number of search matches kept in memory for interactive scrolling.

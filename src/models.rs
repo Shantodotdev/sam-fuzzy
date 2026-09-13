@@ -79,16 +79,21 @@ impl MediaItem {
         match category_filter {
             "All" => true,
             "English" => self.category.starts_with("English Movies"),
-            "Bangla" => self.category.contains("Bangla"),
+            "TV Series" => self.category.contains("TV Series"),
             "Korean" => self.category.contains("Korean"),
+            "Hindi" => self.category.contains("Hindi") || self.category.contains("South Indian"),
+            "Animation" => self.category.contains("Animation"),
+            "1080p" => self.quality.contains("1080p"),
+            "720p" => self.quality.contains("720p"),
+            "3D" => self.category.contains("3D") || self.quality.contains("3D"),
+            "Bangla" => self.category.contains("Bangla"),
+            "Foreign" => self.category.starts_with("Foreign Language Movies") || self.category.contains("Korean"),
             "Chinese/Japanese" => {
                 self.category.contains("Chinese") || self.category.contains("Japanese")
             }
-            "Foreign" => self.category.starts_with("Foreign Language Movies"),
-            "3D" => self.category.contains("3D") || self.quality.contains("3D"),
             "Files Only" => self.is_file,
             "Folders Only" => !self.is_file,
-            other => self.category.to_lowercase().contains(&other.to_lowercase()),
+            other => self.category.to_lowercase().contains(&other.to_lowercase()) || self.quality.to_lowercase().contains(&other.to_lowercase()),
         }
     }
 

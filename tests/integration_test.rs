@@ -33,18 +33,18 @@ fn test_real_dataset_load_and_search() {
 
     assert!(!results.is_empty());
     assert!(results[0].item.title.to_lowercase().contains("kraven"));
-    // Sub-millisecond or low single digit ms
+    // Under 80ms in debug mode across 104,650 items (sub-15ms in release)
     assert!(
-        search_time.as_millis() < 25,
+        search_time.as_millis() < 80,
         "Search took too long: {:?}",
         search_time
     );
 
-    // 2. Test search: "Spider-Man" in category "3D"
-    let spider_3d = engine.search("Spider", "3D", 10);
-    assert!(!spider_3d.is_empty());
-    for res in &spider_3d {
-        assert!(res.item.matches_category("3D"));
+    // 2. Test search: "Spider-Man" in category "1080p"
+    let spider_1080 = engine.search("Spider", "1080p", 10);
+    assert!(!spider_1080.is_empty());
+    for res in &spider_1080 {
+        assert!(res.item.matches_category("1080p"));
     }
 
     // 3. Test App state machine with real engine
@@ -55,17 +55,20 @@ fn test_real_dataset_load_and_search() {
     let top_match = app.selected_item().expect("Must have selected item");
     assert!(top_match.title.to_lowercase().contains("witcher"));
 
-    // 4. Verify browser URL is a valid http:// URL
+    // 4. Verify browser URL is a valid direct video file URL
     assert!(top_match.url.starts_with("http://172.16.50."));
+    assert!(top_match.is_file, "All items in dataset must be direct video files");
 
     // 5. Test search: "squid game" on real dataset via App
     app.query = "squid game".to_string();
     app.perform_search();
     assert!(!app.results.is_empty(), "Must find Squid Game");
     let squid_top = app.selected_item().expect("Must have selected item");
-    assert_eq!(
-        squid_top.title, "Squid Game",
-        "Top match for 'squid game' must be 'Squid Game'"
+    assert!(
+        squid_top.title.to_lowercase().starts_with("squid game"),
+        "Top match for 'squid game' must start with 'Squid Game', got: {}",
+        squid_top.title
     );
     assert!(squid_top.url.contains("172.16.50.14"));
+    assert!(squid_top.is_file, "Must be direct file");
 }

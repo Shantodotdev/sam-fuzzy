@@ -116,6 +116,10 @@ fn test_category_matching() {
     assert!(korean_item.matches_category("All"));
     assert!(korean_item.matches_category("Korean"));
     assert!(korean_item.matches_category("Foreign"));
+    assert!(english_item.matches_category("1080p"));
+    assert!(!english_item.matches_category("720p"));
+    assert!(bangla_item.matches_category("720p"));
+    assert!(!bangla_item.matches_category("1080p"));
     assert!(!korean_item.matches_category("Files Only"));
     assert!(korean_item.matches_category("Folders Only"));
 }
