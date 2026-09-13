@@ -71,4 +71,8 @@ fn test_real_dataset_load_and_search() {
     );
     assert!(squid_top.url.contains("172.16.50.14"));
     assert!(squid_top.is_file, "Must be direct file");
+    assert!(
+        squid_top.size.is_some(),
+        "Media items from real dataset must have populated file size"
+    );
 }

@@ -14,6 +14,7 @@ fn sample_item() -> MediaItem {
         folder_url: "http://172.16.50.7/DHAKA-FLIX-7/English%20Movies/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/English Movies/Dune.mkv".to_string(),
+        size: Some("2.45 GB".to_string()),
     }
 }
 

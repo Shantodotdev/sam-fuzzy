@@ -45,6 +45,9 @@ pub struct MediaItem {
     /// Relative path hierarchy as extracted from the crawl.
     pub path: String,
 
+    /// Human-readable file size if available (e.g., "954.1 MB", "1.42 GB").
+    #[serde(default)]
+    pub size: Option<String>,
 }
 
 impl MediaItem {

@@ -16,6 +16,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/batman/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English Movies/batman.mkv".to_string(),
+            size: Some("2.10 GB".to_string()),
         },
         MediaItem {
             id: 2,
@@ -29,6 +30,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/prestige/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English Movies/prestige.mkv".to_string(),
+            size: Some("1.85 GB".to_string()),
         },
         MediaItem {
             id: 3,
@@ -42,6 +44,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/oldboy/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/Foreign Language Movies/Korean Language/oldboy.mkv".to_string(),
+            size: Some("1.40 GB".to_string()),
         },
     ]
 }
@@ -172,6 +175,7 @@ fn test_result_list_aligns_single_and_double_digit_filenames() {
             folder_url: "http://172.16.50.14/".to_string(),
             server: "DHAKA-FLIX-14".to_string(),
             path: format!("DHAKA-FLIX-14/m{:02}.mkv", i),
+            size: Some(format!("{}00 MB", i)),
         })
         .collect();
 
@@ -237,6 +241,7 @@ fn test_inspector_widget_simplified_rendering() {
     assert!(content.contains("Title    : Batman Begins"));
     assert!(content.contains("Year     : 2005"));
     assert!(content.contains("Quality  : 1080p"));
+    assert!(content.contains("Size     : 2.10 GB"));
     assert!(content.contains("Category : English Movies"));
     assert!(content.contains("Server   : DHAKA-FLIX-7"));
     assert!(content.contains("File     : Batman.Begins.2005.1080p.mkv"));

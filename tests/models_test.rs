@@ -14,6 +14,7 @@ fn test_media_item_display_title() {
         folder_url: "http://172.16.50.7/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/English Movies/test.mkv".to_string(),
+        size: Some("1.50 GB".to_string()),
     };
 
     assert_eq!(item.display_title(), "Kraven the Hunter (2024)");
@@ -33,6 +34,7 @@ fn test_media_item_display_title_without_year() {
         folder_url: "http://172.16.50.7/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/English Movies/test2.mkv".to_string(),
+        size: None,
     };
 
     assert_eq!(item.display_title(), "Mystery Film");
@@ -52,6 +54,7 @@ fn test_search_haystack_contains_metadata() {
         folder_url: "http://172.16.50.7/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/3D Movies/doc.mkv".to_string(),
+        size: Some("2.20 GB".to_string()),
     };
 
     let haystack = item.search_haystack().to_lowercase();
@@ -75,6 +78,7 @@ fn test_category_matching() {
         folder_url: "http://172.16.50.7/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/English Movies/inc.mkv".to_string(),
+        size: Some("1.80 GB".to_string()),
     };
 
     let bangla_item = MediaItem {
@@ -89,6 +93,7 @@ fn test_category_matching() {
         folder_url: "http://172.16.50.7/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/Kolkata Bangla Movies/cp.mkv".to_string(),
+        size: Some("950 MB".to_string()),
     };
 
     let korean_item = MediaItem {
@@ -103,6 +108,7 @@ fn test_category_matching() {
         folder_url: "http://172.16.50.7/parasite/".to_string(),
         server: "DHAKA-FLIX-7".to_string(),
         path: "DHAKA-FLIX-7/Foreign Language Movies/Korean Language/Parasite".to_string(),
+        size: None,
     };
 
     assert!(english_item.matches_category("All"));
@@ -169,6 +175,7 @@ fn test_display_title_strips_mkv_and_extensions() {
         folder_url: "http://172.16.50.14/".to_string(),
         server: "DHAKA-FLIX-14".to_string(),
         path: "DHAKA-FLIX-14/squid.mkv".to_string(),
+        size: Some("954.1 MB".to_string()),
     };
 
     assert_eq!(item.display_title(), "Squid Game S01E01");

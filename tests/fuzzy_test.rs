@@ -16,6 +16,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/dark_knight/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English Movies/dark_knight.mkv".to_string(),
+            size: Some("2.10 GB".to_string()),
         },
         MediaItem {
             id: 2,
@@ -29,6 +30,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/dark_knight_rises/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English Movies/dark_knight_rises.mkv".to_string(),
+            size: Some("2.40 GB".to_string()),
         },
         MediaItem {
             id: 3,
@@ -42,6 +44,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/spiderman_verse/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/3D Movies/spiderman_verse.mkv".to_string(),
+            size: Some("1.90 GB".to_string()),
         },
         MediaItem {
             id: 4,
@@ -55,6 +58,7 @@ fn sample_items() -> Vec<MediaItem> {
             folder_url: "http://172.16.50.7/feluda/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/Kolkata Bangla Movies/feluda.mkv".to_string(),
+            size: Some("800 MB".to_string()),
         },
     ]
 }
@@ -109,6 +113,7 @@ fn test_search_performance_sub_millisecond() {
             folder_url: "http://172.16.50.7/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: format!("DHAKA-FLIX-7/English Movies/movie_{}.mkv", i),
+            size: Some("1.20 GB".to_string()),
         });
     }
 
@@ -142,6 +147,7 @@ fn test_exact_lowercase_keyword_priority() {
             folder_url: "http://172.16.50.7/thorns/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/Foreign/Thorns".to_string(),
+            size: Some("1.80 GB".to_string()),
         },
         MediaItem {
             id: 2,
@@ -155,6 +161,7 @@ fn test_exact_lowercase_keyword_priority() {
             folder_url: "http://172.16.50.7/thor/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English/Thor".to_string(),
+            size: Some("2.10 GB".to_string()),
         },
         MediaItem {
             id: 3,
@@ -168,6 +175,7 @@ fn test_exact_lowercase_keyword_priority() {
             folder_url: "http://172.16.50.7/thor_love/".to_string(),
             server: "DHAKA-FLIX-7".to_string(),
             path: "DHAKA-FLIX-7/English/Thor-Love and Thunder".to_string(),
+            size: Some("1.30 GB".to_string()),
         },
     ];
 

@@ -194,6 +194,12 @@ impl<'a> Widget for ResultListWidget<'a> {
                 line_spans.push(Span::styled(format!("[{}]", res.item.quality), style_badge_cyan()));
             }
 
+            // File size badge (e.g. 954.1 MB, 1.42 GB)
+            if let Some(size) = &res.item.size {
+                line_spans.push(Span::raw("  "));
+                line_spans.push(Span::styled(format!("[{}]", size), style_badge_green()));
+            }
+
             // Category tag
             line_spans.push(Span::raw("  "));
             line_spans.push(Span::styled(format!("• {}", res.item.category), style_dim()));
@@ -264,6 +270,14 @@ impl<'a> Widget for InspectorWidget<'a> {
             Span::styled(" Quality  : ", style_dim()),
             Span::styled(&item.quality, style_badge_cyan()),
         ]));
+
+        // 4. File Size (if available)
+        if let Some(size) = &item.size {
+            lines.push(Line::from(vec![
+                Span::styled(" Size     : ", style_dim()),
+                Span::styled(size, style_badge_green()),
+            ]));
+        }
 
         // 5. Category
         lines.push(Line::from(vec![
