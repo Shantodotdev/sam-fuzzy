@@ -74,7 +74,7 @@ static PERSISTENT_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None
 /// Base64 encoding helper for OSC 52 terminal clipboard escape sequences.
 fn base64_encode(bytes: &[u8]) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
         let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
@@ -166,9 +166,7 @@ fn copy_via_osc52(text: &str) -> bool {
 fn copy_via_arboard(text: &str) -> bool {
     if let Ok(mut guard) = PERSISTENT_CLIPBOARD.lock() {
         if guard.is_none() {
-            if let Ok(cb) = arboard::Clipboard::new() {
-                *guard = Some(cb);
-            }
+            *guard = arboard::Clipboard::new().ok();
         }
         if let Some(cb) = guard.as_mut() {
             return cb.set_text(text.to_string()).is_ok();
@@ -196,10 +194,8 @@ pub fn copy_to_clipboard(text: &str) -> ActionOutcome {
     }
 
     // 2. Try X11 native tools if Wayland did not handle it
-    if !copied {
-        if copy_via_xclip(text) || copy_via_xsel(text) {
-            copied = true;
-        }
+    if !copied && (copy_via_xclip(text) || copy_via_xsel(text)) {
+        copied = true;
     }
 
     // 3. Fallback: try wl-copy even if WAYLAND_DISPLAY wasn't explicitly set

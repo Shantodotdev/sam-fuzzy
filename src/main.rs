@@ -76,12 +76,12 @@ fn resolve_data_path(custom: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     }
 
     // 3. Fallback: Check folder relative to the executable
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(parent) = exe_path.parent() {
-            let exe_data = parent.join("data/sam_media.json");
-            if exe_data.exists() {
-                return Ok(exe_data);
-            }
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(parent) = exe_path.parent()
+    {
+        let exe_data = parent.join("data/sam_media.json");
+        if exe_data.exists() {
+            return Ok(exe_data);
         }
     }
 
@@ -185,12 +185,13 @@ fn run_app(
         }
 
         // Poll for keyboard input with 50ms timeout
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                // Ignore key release/repeat events on platforms supporting the Kitty keyboard protocol
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+        {
+            // Ignore key release/repeat events on platforms supporting the Kitty keyboard protocol
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
 
                 // Global keyboard event routing
                 match (key.modifiers, key.code) {
@@ -301,7 +302,6 @@ fn run_app(
                 }
             }
         }
-    }
 
     Ok(())
 }

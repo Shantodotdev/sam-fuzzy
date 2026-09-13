@@ -1,1 +1,5 @@
 /target
+*.mkv
+*.mp4
+*.avi
+data/folder_sizes_cache.json
