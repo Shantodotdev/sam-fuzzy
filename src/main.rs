@@ -131,16 +131,12 @@ fn main() -> anyhow::Result<()> {
         if !custom.exists() {
             anyhow::bail!("Specified dataset path not found: {:?}", custom);
         }
-        println!("Loading SamOnline media index from {:?}...", custom);
         load_dataset(&custom).context(format!("Failed to parse dataset from {:?}", custom))?
     } else if let Some(data_path) = find_local_dataset() {
-        println!("Loading SamOnline media index from {:?}...", data_path);
         load_dataset(&data_path).context(format!("Failed to parse dataset from {:?}", data_path))?
     } else {
-        println!("Loading embedded SamOnline media index (104k+ items)...");
         load_embedded_dataset().context("Failed to decompress embedded dataset")?
     };
-    println!("Loaded {} items into memory.", items.len());
 
     // Initialize fuzzy engine and application state
     let engine = SearchEngine::new(items);
