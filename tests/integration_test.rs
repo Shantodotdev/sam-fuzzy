@@ -40,11 +40,11 @@ fn test_real_dataset_load_and_search() {
         search_time
     );
 
-    // 2. Test search: "Spider-Man" in category "1080p"
-    let spider_1080 = engine.search("Spider", "1080p", 10);
-    assert!(!spider_1080.is_empty());
-    for res in &spider_1080 {
-        assert!(res.item.matches_category("1080p"));
+    // 2. Test search: "Spider-Man" in category "English"
+    let spider = engine.search("Spider", "English", 10);
+    assert!(!spider.is_empty());
+    for res in &spider {
+        assert!(res.item.matches_category("English"));
     }
 
     // 3. Test App state machine with real engine

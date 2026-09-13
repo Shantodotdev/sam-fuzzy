@@ -44,19 +44,23 @@ pub struct MediaItem {
 
     /// Relative path hierarchy as extracted from the crawl.
     pub path: String,
+
 }
 
 impl MediaItem {
-    /// Formats a clean human-readable title, appending release year when known.
-    ///
-    /// # Example
-    /// - `Title` + `Some(2024)` -> `"Kraven the Hunter (2024)"`
-    /// - `Title` + `None`       -> `"Kraven the Hunter"`
+    /// Formats a clean human-readable title, stripping trailing file extensions
+    /// and appending release year when known.
     pub fn display_title(&self) -> String {
+        let mut clean_title = self.title.clone();
+        for ext in &[".mkv", ".mp4", ".avi", ".webm", ".flv", " -mkvC", "-mkvC"] {
+            if clean_title.to_lowercase().ends_with(&ext.to_lowercase()) {
+                clean_title.truncate(clean_title.len() - ext.len());
+            }
+        }
         if let Some(y) = self.year {
-            format!("{} ({})", self.title, y)
+            format!("{} ({})", clean_title, y)
         } else {
-            self.title.clone()
+            clean_title
         }
     }
 
@@ -72,9 +76,6 @@ impl MediaItem {
     }
 
     /// Evaluates whether this item satisfies the active category filter tab.
-    ///
-    /// Tab matching handles broader groups (e.g., "Foreign" includes Korean, French,
-    /// Chinese, etc.), file-type constraints, and case-insensitive fallbacks.
     pub fn matches_category(&self, category_filter: &str) -> bool {
         match category_filter {
             "All" => true,
@@ -83,21 +84,19 @@ impl MediaItem {
             "Korean" => self.category.contains("Korean"),
             "Hindi" => self.category.contains("Hindi") || self.category.contains("South Indian"),
             "Animation" => self.category.contains("Animation"),
-            "1080p" => self.quality.contains("1080p"),
-            "720p" => self.quality.contains("720p"),
-            "3D" => self.category.contains("3D") || self.quality.contains("3D"),
             "Bangla" => self.category.contains("Bangla"),
             "Foreign" => self.category.starts_with("Foreign Language Movies") || self.category.contains("Korean"),
             "Chinese/Japanese" => {
                 self.category.contains("Chinese") || self.category.contains("Japanese")
             }
+            "3D" => self.category.contains("3D") || self.quality.contains("3D"),
             "Files Only" => self.is_file,
             "Folders Only" => !self.is_file,
-            other => self.category.to_lowercase().contains(&other.to_lowercase()) || self.quality.to_lowercase().contains(&other.to_lowercase()),
+            other => self.category.to_lowercase().contains(&other.to_lowercase()),
         }
     }
 
-    /// Returns a short badge tag for display in the results list (e.g. "MKV", "MP4", "DIR").
+    /// Returns a short badge tag for display (e.g. "MKV", "MP4", "DIR").
     pub fn file_type_label(&self) -> &'static str {
         if self.is_file {
             let lower = self.filename.to_lowercase();
@@ -112,6 +111,57 @@ impl MediaItem {
             }
         } else {
             "DIR"
+        }
+    }
+}
+
+/// Natural alphanumeric ordering comparator (e.g. "S01E02" < "S01E10").
+/// Compares consecutive digit sequences as integers so multi-season series
+/// are naturally ordered for intuitive tracking.
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut a_chars = a.chars().peekable();
+    let mut b_chars = b.chars().peekable();
+
+    loop {
+        match (a_chars.peek(), b_chars.peek()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(ca), Some(cb)) if ca.is_ascii_digit() && cb.is_ascii_digit() => {
+                let mut num_a: u64 = 0;
+                while let Some(d) = a_chars.peek() {
+                    if let Some(val) = d.to_digit(10) {
+                        num_a = num_a.saturating_mul(10).saturating_add(val as u64);
+                        a_chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let mut num_b: u64 = 0;
+                while let Some(d) = b_chars.peek() {
+                    if let Some(val) = d.to_digit(10) {
+                        num_b = num_b.saturating_mul(10).saturating_add(val as u64);
+                        b_chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                match num_a.cmp(&num_b) {
+                    std::cmp::Ordering::Equal => continue,
+                    ord => return ord,
+                }
+            }
+            (Some(ca), Some(cb)) => {
+                let la = ca.to_ascii_lowercase();
+                let lb = cb.to_ascii_lowercase();
+                match la.cmp(&lb) {
+                    std::cmp::Ordering::Equal => {
+                        a_chars.next();
+                        b_chars.next();
+                    }
+                    ord => return ord,
+                }
+            }
         }
     }
 }

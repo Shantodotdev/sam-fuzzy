@@ -33,9 +33,14 @@ pub struct SearchEngine {
 }
 
 impl SearchEngine {
-    /// Initializes the search engine by pre-caching lowercased titles, filenames,
-    /// and composite search haystacks for all items.
-    pub fn new(items: Vec<MediaItem>) -> Self {
+    /// Initializes the search engine by sorting items in natural ascending order
+    /// and pre-caching lowercased titles, filenames, and search haystacks.
+    pub fn new(mut items: Vec<MediaItem>) -> Self {
+        items.sort_unstable_by(|a, b| {
+            crate::models::natural_cmp(&a.title, &b.title)
+                .then_with(|| crate::models::natural_cmp(&a.filename, &b.filename))
+        });
+
         let haystacks = items.iter().map(|item| item.search_haystack()).collect();
         let titles_lower = items.iter().map(|item| item.title.to_lowercase()).collect();
         let filenames_lower = items.iter().map(|item| item.filename.to_lowercase()).collect();
@@ -154,8 +159,8 @@ impl SearchEngine {
             }
         }
 
-        // Rank by composite score descending
-        matches.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        // Rank by composite score descending, using natural ascending dataset index as tie-breaker
+        matches.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
         // Truncate to maximum visible results before computing highlight indices
         if matches.len() > limit {

@@ -116,10 +116,6 @@ fn test_category_matching() {
     assert!(korean_item.matches_category("All"));
     assert!(korean_item.matches_category("Korean"));
     assert!(korean_item.matches_category("Foreign"));
-    assert!(english_item.matches_category("1080p"));
-    assert!(!english_item.matches_category("720p"));
-    assert!(bangla_item.matches_category("720p"));
-    assert!(!bangla_item.matches_category("1080p"));
     assert!(!korean_item.matches_category("Files Only"));
     assert!(korean_item.matches_category("Folders Only"));
 }
@@ -146,4 +142,34 @@ fn test_load_dataset_from_str() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].title, "Gladiator");
     assert_eq!(items[0].year, Some(2000));
+}
+
+#[test]
+fn test_natural_cmp_series_ordering() {
+    use sam_fuzzy::models::natural_cmp;
+
+    assert_eq!(natural_cmp("Squid Game S01E01", "Squid Game S01E02"), std::cmp::Ordering::Less);
+    assert_eq!(natural_cmp("Squid Game S01E02", "Squid Game S01E10"), std::cmp::Ordering::Less);
+    assert_eq!(natural_cmp("Squid Game S01E09", "Squid Game S01E10"), std::cmp::Ordering::Less);
+    assert_eq!(natural_cmp("Squid Game S01E10", "Squid Game S02E01"), std::cmp::Ordering::Less);
+    assert_eq!(natural_cmp("Squid Game S02E06", "Squid Game S03E01"), std::cmp::Ordering::Less);
+}
+
+#[test]
+fn test_display_title_strips_mkv_and_extensions() {
+    let item = MediaItem {
+        id: 10,
+        title: "Squid Game S01E01.mkv".to_string(),
+        year: None,
+        quality: "1080p".to_string(),
+        category: "TV Series".to_string(),
+        filename: "Squid Game S01E01.mkv".to_string(),
+        is_file: true,
+        url: "http://172.16.50.14/squid.mkv".to_string(),
+        folder_url: "http://172.16.50.14/".to_string(),
+        server: "DHAKA-FLIX-14".to_string(),
+        path: "DHAKA-FLIX-14/squid.mkv".to_string(),
+    };
+
+    assert_eq!(item.display_title(), "Squid Game S01E01");
 }

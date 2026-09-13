@@ -16,8 +16,6 @@ pub const CATEGORIES: &[&str] = &[
     "Korean",
     "Hindi",
     "Animation",
-    "1080p",
-    "720p",
 ];
 
 /// Maximum number of search matches kept in memory for interactive scrolling.
@@ -280,12 +278,12 @@ impl App {
 
     /// Returns the active status message if within its 4-second TTL.
     pub fn active_status(&self) -> Option<(&str, bool)> {
-        if let Some((msg, time, is_err)) = &self.status {
-            if time.elapsed() < Duration::from_secs(4) {
-                return Some((msg.as_str(), *is_err));
+        match &self.status {
+            Some((msg, time, is_err)) if time.elapsed() < Duration::from_secs(4) => {
+                Some((msg.as_str(), *is_err))
             }
+            _ => None,
         }
-        None
     }
 
     /// Toggles the keyboard help modal.
