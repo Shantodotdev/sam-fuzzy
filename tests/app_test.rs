@@ -255,5 +255,35 @@ fn test_inspector_widget_simplified_rendering() {
     assert!(!content.contains("Direct Video File"));
 }
 
+#[test]
+fn test_banner_widget_simplified_rendering() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use sam_fuzzy::ui::banner::BannerWidget;
 
+    let engine = SearchEngine::new(sample_items());
+    let app = App::new(engine);
 
+    let area = Rect::new(0, 0, 80, 1);
+    let mut buf = Buffer::empty(area);
+    let widget = BannerWidget { app: &app };
+    widget.render(area, &mut buf);
+
+    let mut content = String::new();
+    for x in 0..area.width {
+        if let Some(cell) = buf.cell((x, 0)) {
+            content.push_str(cell.symbol());
+        }
+    }
+
+    // Must have clean branding
+    assert!(content.contains("SAM-FUZZY"));
+    assert!(content.contains("SAMONLINE MEDIA EXPLORER"));
+
+    // Must NOT contain removed telemetry data
+    assert!(!content.contains("LATENCY"));
+    assert!(!content.contains("TOTAL:"));
+    assert!(!content.contains("MATCHES:"));
+    assert!(!content.contains("HOSTS:"));
+}

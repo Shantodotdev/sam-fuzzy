@@ -26,27 +26,16 @@ use ratatui::Frame;
 pub fn render_ui(f: &mut Frame, app: &App) {
     let size = f.area();
 
-    // Responsive banner height:
-    // - Full ASCII banner (8 rows) when vertical space >= 30 and horizontal >= 80.
-    // - Medium header (2 rows) when vertical space >= 22.
-    // - Ultra-compact single line (1 row) on constrained viewports.
-    let banner_height = if size.height >= 30 && size.width >= 80 {
-        8
-    } else if size.height >= 22 {
-        2
-    } else {
-        1
-    };
-
-    // Primary vertical layout allocation
+    // Primary vertical layout allocation:
+    // Uses a streamlined 1-line header to maximize vertical screen space for results.
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(banner_height), // Banner & Telemetry
-            Constraint::Length(3),             // Search Bar (input + rounded border)
-            Constraint::Length(1),             // Category navigation pills
-            Constraint::Min(8),                // Results & Inspector workspace
-            Constraint::Length(1),             // Footer status & keybindings
+            Constraint::Length(1), // Compact Header Banner
+            Constraint::Length(3), // Search Bar (input + rounded border)
+            Constraint::Length(1), // Category navigation pills
+            Constraint::Min(8),    // Results & Inspector workspace
+            Constraint::Length(1), // Footer status & keybindings
         ])
         .split(size);
 
