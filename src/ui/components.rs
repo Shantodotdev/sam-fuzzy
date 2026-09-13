@@ -9,7 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
 /// Interactive search input bar with real-time prompt and cursor.
 ///
@@ -139,6 +139,8 @@ impl<'a> Widget for ResultListWidget<'a> {
             selected.saturating_sub(visible_height / 2)
         };
 
+        let idx_width = self.app.results.len().to_string().len();
+
         let visible_items = self.app.results.iter().skip(scroll_top).take(visible_height);
 
         let mut lines = Vec::new();
@@ -155,14 +157,11 @@ impl<'a> Widget for ResultListWidget<'a> {
                 line_spans.push(Span::styled("   ", style_dim()));
             }
 
-            // File type badge: Green for playable video files, Cyan for directories
-            let type_badge = res.item.file_type_label();
-            let type_style = if res.item.is_file {
-                style_badge_green()
-            } else {
-                style_badge_cyan()
-            };
-            line_spans.push(Span::styled(format!("{:<4} ", type_badge), type_style));
+            // 1-based index number right-aligned to match the maximum digit width of results,
+            // formatted without dot and followed by a single space so all filenames start
+            // at the exact same horizontal alignment column.
+            let index_str = format!("{:>width$} ", current_idx + 1, width = idx_width);
+            line_spans.push(Span::styled(index_str, style_index(is_selected)));
 
             // Formatted title with optional release year
             let display_title = res.item.display_title();
@@ -212,14 +211,12 @@ impl<'a> Widget for ResultListWidget<'a> {
     }
 }
 
-/// Detailed metadata inspector panel and actions cheatsheet for the selected media item.
+/// Compact metadata inspector panel for the currently selected media item.
 ///
-/// Displays full metadata breakdown including:
-/// - Title, release year, and encoding quality profile.
+/// Displays core movie/series attributes:
+/// - Clean display title, release year, and encoding quality profile.
 /// - Section category and originating mirror server ID.
-/// - Full folder hierarchy rendered as hierarchical breadcrumbs.
-/// - Direct stream/download URL and parent directory URL.
-/// - Quick-action keyboard cheatsheet.
+/// - Physical filename and server folder location.
 pub struct InspectorWidget<'a> {
     pub app: &'a App,
 }
@@ -230,7 +227,7 @@ impl<'a> Widget for InspectorWidget<'a> {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_border())
-            .title(Span::styled(" MEDIA INSPECTOR & ACTIONS ", style_header()));
+            .title(Span::styled(" MEDIA DETAILS ", style_header()));
 
         let inner_area = block.inner(area);
         block.render(area, buf);
@@ -248,111 +245,61 @@ impl<'a> Widget for InspectorWidget<'a> {
 
         // 1. Primary Title
         lines.push(Line::from(vec![
-            Span::styled(" TITLE    : ", style_header()),
-            Span::styled(item.display_title(), Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD)),
+            Span::styled(" Title    : ", style_header()),
+            Span::styled(
+                item.display_title(),
+                Style::default().fg(COLOR_WHITE).add_modifier(Modifier::BOLD),
+            ),
         ]));
 
-        // 2. Release Year & Quality Profile
+        // 2. Release Year
         let year_str = item.year.map(|y| y.to_string()).unwrap_or_else(|| "N/A".to_string());
         lines.push(Line::from(vec![
-            Span::styled(" RELEASE  : ", style_dim()),
+            Span::styled(" Year     : ", style_dim()),
             Span::styled(year_str, style_badge_green()),
-            Span::styled("   QUALITY : ", style_dim()),
+        ]));
+
+        // 3. Quality Profile
+        lines.push(Line::from(vec![
+            Span::styled(" Quality  : ", style_dim()),
             Span::styled(&item.quality, style_badge_cyan()),
         ]));
 
-        // 3. Category & Server Mirror Host
+        // 5. Category
         lines.push(Line::from(vec![
-            Span::styled(" SECTION  : ", style_dim()),
+            Span::styled(" Category : ", style_dim()),
             Span::styled(&item.category, style_badge_yellow()),
-            Span::styled("   SERVER  : ", style_dim()),
+        ]));
+
+        // 5. Server Mirror Host
+        lines.push(Line::from(vec![
+            Span::styled(" Server   : ", style_dim()),
             Span::styled(&item.server, style_dim()),
         ]));
 
         lines.push(Line::raw(""));
 
-        // 4. File Type and Physical Filename
-        let type_desc = if item.is_file {
-            "Direct Video File (.mkv / .mp4)"
-        } else {
-            "Media Directory / Series Folder"
-        };
+        // 6. Physical Filename
         lines.push(Line::from(vec![
-            Span::styled(" TYPE     : ", style_dim()),
-            Span::styled(type_desc, Style::default().fg(COLOR_WHITE)),
+            Span::styled(" File     : ", style_dim()),
+            Span::styled(&item.filename, Style::default().fg(COLOR_WHITE)),
         ]));
 
-        lines.push(Line::from(vec![
-            Span::styled(" FILENAME : ", style_dim()),
-            Span::styled(&item.filename, style_dim()),
-        ]));
-
-        lines.push(Line::raw(""));
-
-        // 5. Breadcrumb Path: Renders hierarchy tree using ASCII branch connectors
-        lines.push(Line::from(vec![
-            Span::styled(" PATH BREADCRUMBS:", style_header()),
-        ]));
-        let path_parts = item.path.split('/').collect::<Vec<_>>();
-        for (idx, part) in path_parts.iter().enumerate() {
-            let prefix = if idx == path_parts.len() - 1 { " └─ " } else { " ├─ " };
+        // 7. Directory Folder Hierarchy
+        if let Some((folder, _)) = item.path.rsplit_once('/') {
+            let display_folder = folder
+                .strip_prefix(&item.server)
+                .map(|s| s.trim_start_matches('/'))
+                .unwrap_or(folder);
             lines.push(Line::from(vec![
-                Span::styled(prefix, style_dim()),
-                Span::styled(*part, if idx == path_parts.len() - 1 { style_badge_green() } else { style_dim() }),
+                Span::styled(" Folder   : ", style_dim()),
+                Span::styled(display_folder, style_dim()),
             ]));
         }
 
-        lines.push(Line::raw(""));
-
-        // 6. Direct HTTP Stream URL
-        lines.push(Line::from(vec![
-            Span::styled(" DIRECT STREAM URL:", style_header()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {}", item.url), Style::default().fg(COLOR_CYAN).add_modifier(Modifier::UNDERLINED)),
-        ]));
-
-        lines.push(Line::raw(""));
-
-        // 7. Parent Folder Mirror URL (opens directory view in browser)
-        lines.push(Line::from(vec![
-            Span::styled(" PARENT FOLDER URL:", style_header()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {}", item.folder_url), Style::default().fg(COLOR_DIM)),
-        ]));
-
-        lines.push(Line::raw(""));
-
-        // 8. Action Shortcuts Reference Box
-        lines.push(Line::from(vec![
-            Span::styled(" ┌──────────────── ACTION SHORTCUTS ────────────────┐", style_dim()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" │ ", style_dim()),
-            Span::styled("[Enter]", style_header()),
-            Span::styled(" Open in Browser (DhakaFlix / Stream)    │", Style::default().fg(COLOR_WHITE)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" │ ", style_dim()),
-            Span::styled("[Alt+C]", style_header()),
-            Span::styled(" Copy Direct Link (or F2 / Ctrl+Y)        │", Style::default().fg(COLOR_WHITE)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" │ ", style_dim()),
-            Span::styled("[Alt+P]", style_header()),
-            Span::styled(" Stream with MPV / VLC (or F3)            │", Style::default().fg(COLOR_WHITE)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" │ ", style_dim()),
-            Span::styled("[Alt+F]", style_header()),
-            Span::styled(" Open Parent Folder in Browser (or F4)    │", Style::default().fg(COLOR_WHITE)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" └──────────────────────────────────────────────────┘", style_dim()),
-        ]));
-
-        Paragraph::new(lines).render(inner_area, buf);
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .render(inner_area, buf);
     }
 }
 

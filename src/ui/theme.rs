@@ -84,3 +84,15 @@ pub fn style_highlight_match() -> Style {
         .fg(COLOR_YELLOW)
         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
 }
+
+/// Style for result list row index numbers.
+///
+/// Uses high-visibility cyan to visually separate the item sequence number
+/// from the white media title without visual clutter.
+pub fn style_index(is_selected: bool) -> Style {
+    if is_selected {
+        Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(COLOR_CYAN)
+    }
+}
