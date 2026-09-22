@@ -1,4 +1,4 @@
-use sam_fuzzy::actions::ActionOutcome;
+use sam_fuzzy::actions::{ActionOutcome, parse_size_hint};
 use sam_fuzzy::models::MediaItem;
 
 fn sample_item() -> MediaItem {
@@ -28,6 +28,15 @@ fn test_action_outcome_format() {
 
     let outcome_player = ActionOutcome::PlayerLaunched("mpv".to_string());
     assert!(outcome_player.message().contains("mpv"));
+}
+
+#[test]
+fn test_parse_size_hint_supports_index_units_and_unknown_values() {
+    assert_eq!(parse_size_hint(Some("2.45 GB")), Some(2_630_667_469));
+    assert_eq!(parse_size_hint(Some("815.7 MiB")), Some(855_323_443));
+    assert_eq!(parse_size_hint(Some("512 B")), Some(512));
+    assert_eq!(parse_size_hint(Some("unknown")), None);
+    assert_eq!(parse_size_hint(None), None);
 }
 
 #[test]

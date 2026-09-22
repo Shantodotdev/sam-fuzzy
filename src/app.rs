@@ -9,7 +9,7 @@
 
 use crate::actions::{
     ActionOutcome, DownloadEvent, copy_to_clipboard, default_download_dir, launch_player,
-    open_in_browser, start_download,
+    open_in_browser, parse_size_hint, start_download,
 };
 use crate::fuzzy::SearchEngine;
 use crate::models::MediaItem;
@@ -311,6 +311,7 @@ impl App {
         self.download_counter = self.download_counter.saturating_add(1);
         let id = self.download_counter;
         let filename = item.filename.clone();
+        let total_hint = parse_size_hint(item.size.as_deref());
         let cancellation = Arc::new(AtomicBool::new(false));
         match start_download(
             id,
@@ -319,14 +320,17 @@ impl App {
             self.download_dir.clone(),
             self.download_tx.clone(),
             Arc::clone(&cancellation),
+            total_hint,
         ) {
             Ok(destination) => {
-                self.downloads.push(DownloadTask::queued_with_token(
+                let mut task = DownloadTask::queued_with_token(
                     id,
                     filename,
                     destination.clone(),
                     cancellation,
-                ));
+                );
+                task.total = total_hint;
+                self.downloads.push(task);
                 self.selected_download_index = self.downloads.len().saturating_sub(1);
                 self.show_downloads = true;
                 let outcome = ActionOutcome::DownloadStarted(destination);
