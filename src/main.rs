@@ -30,7 +30,7 @@ use std::time::Duration;
 #[command(
     name = "sam-fuzzy",
     author = "KR Shanto",
-    version = "0.1.0",
+    version,
     about = "Lightning-fast fzf-style TUI for SamOnline FTP media discovery"
 )]
 struct Args {
