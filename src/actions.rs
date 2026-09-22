@@ -17,6 +17,12 @@ pub enum ActionOutcome {
     /// Media player launched in background.
     PlayerLaunched(String),
 
+    /// A background file transfer has started.
+    DownloadStarted(PathBuf),
+
+    /// A matching transfer is already managed by the application.
+    DownloadAlreadyQueued(String),
+
     /// Action failed with an error description.
     Error(String),
 }
@@ -31,6 +37,16 @@ impl ActionOutcome {
             }
             ActionOutcome::PlayerLaunched(player) => {
                 format!("🎬 Launched {} player in background", player)
+            }
+            ActionOutcome::DownloadStarted(path) => {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("file");
+                format!("⬇ Download started: {name}")
+            }
+            ActionOutcome::DownloadAlreadyQueued(filename) => {
+                format!("⬇ Already downloading: {filename}")
             }
             ActionOutcome::Error(err) => format!("⚠️ {}", err),
         }
@@ -68,8 +84,211 @@ pub fn open_in_browser(url: &str) -> ActionOutcome {
     }
 }
 
-use std::io::Write;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::mpsc::Sender;
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// State updates emitted by the background file downloader.
+#[derive(Debug)]
+pub enum DownloadEvent {
+    /// The transfer made progress; `total` is absent when the server does not send a size.
+    Progress {
+        /// Application-owned download identifier.
+        id: u64,
+        /// Bytes written to the temporary file.
+        downloaded: u64,
+        /// Final expected byte count, when known.
+        total: Option<u64>,
+    },
+    /// The temporary file was promoted to its final destination.
+    Completed {
+        /// Application-owned download identifier.
+        id: u64,
+        /// Completed file path.
+        destination: PathBuf,
+        /// Final byte count.
+        downloaded: u64,
+    },
+    /// The transfer could not be completed.
+    Failed {
+        /// Application-owned download identifier.
+        id: u64,
+        /// Human-readable cause.
+        error: String,
+    },
+}
+
+/// Returns the conventional per-user download directory for the current platform.
+///
+/// A caller can always override this with the `--downloads-dir` command-line option.
+pub fn default_download_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XDG_DOWNLOAD_DIR") {
+        return PathBuf::from(path);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            return PathBuf::from(home).join("Downloads");
+        }
+    }
+
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Downloads"))
+        .unwrap_or_else(|| PathBuf::from("Downloads"))
+}
+
+/// Starts a resumable HTTP(S) file transfer on a detached worker thread.
+///
+/// Downloads are written to `<name>.part` first. If a prior partial file exists,
+/// the worker requests the remaining range and continues it when the server supports
+/// HTTP range requests. The final rename only happens after the full response is written.
+pub fn start_download(
+    id: u64,
+    url: String,
+    filename: String,
+    directory: PathBuf,
+    updates: Sender<DownloadEvent>,
+) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(&directory)?;
+    let destination = available_destination(&directory, &filename);
+    let part_path = part_path_for(&destination);
+    let worker_destination = destination.clone();
+
+    thread::Builder::new()
+        .name(format!("download-{id}"))
+        .spawn(move || {
+            if let Err(error) =
+                download_to_path(id, &url, &part_path, &worker_destination, &updates)
+            {
+                let _ = updates.send(DownloadEvent::Failed {
+                    id,
+                    error: error.to_string(),
+                });
+            }
+        })?;
+
+    Ok(destination)
+}
+
+fn available_destination(directory: &Path, filename: &str) -> PathBuf {
+    let filename = Path::new(filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("sam-fuzzy-download");
+    let base = Path::new(filename);
+    let stem = base
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(filename);
+    let extension = base.extension().and_then(|value| value.to_str());
+
+    let candidate = directory.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    for index in 1.. {
+        let name = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = directory.join(name);
+        if !candidate.exists() && !part_path_for(&candidate).exists() {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded counter always yields a path")
+}
+
+fn part_path_for(destination: &Path) -> PathBuf {
+    let mut value = destination.as_os_str().to_owned();
+    value.push(".part");
+    PathBuf::from(value)
+}
+
+fn download_to_path(
+    id: u64,
+    url: &str,
+    part_path: &Path,
+    destination: &Path,
+    updates: &Sender<DownloadEvent>,
+) -> anyhow::Result<()> {
+    let existing_bytes = fs::metadata(part_path).map(|meta| meta.len()).unwrap_or(0);
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .build()?;
+
+    let mut request = client.get(url);
+    if existing_bytes > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"));
+    }
+    let mut response = request.send()?.error_for_status()?;
+    let resumed = existing_bytes > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let starting_bytes = if resumed { existing_bytes } else { 0 };
+    let total = response
+        .content_length()
+        .map(|remaining| remaining.saturating_add(starting_bytes));
+
+    let mut output = if resumed {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(part_path)?
+    } else {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(part_path)?
+    };
+
+    let mut downloaded = starting_bytes;
+    let mut last_report = Instant::now() - Duration::from_secs(1);
+    let _ = updates.send(DownloadEvent::Progress {
+        id,
+        downloaded,
+        total,
+    });
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = response.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        output.write_all(&buffer[..read])?;
+        downloaded = downloaded.saturating_add(read as u64);
+        if last_report.elapsed() >= Duration::from_millis(150) {
+            let _ = updates.send(DownloadEvent::Progress {
+                id,
+                downloaded,
+                total,
+            });
+            last_report = Instant::now();
+        }
+    }
+    output.flush()?;
+    drop(output);
+
+    let _ = updates.send(DownloadEvent::Progress {
+        id,
+        downloaded,
+        total,
+    });
+    fs::rename(part_path, destination)?;
+    let _ = updates.send(DownloadEvent::Completed {
+        id,
+        destination: destination.to_path_buf(),
+        downloaded,
+    });
+    Ok(())
+}
 
 /// Keeps the in-process clipboard handle alive across invocations.
 /// On Linux (X11/Wayland), dropping `Clipboard` immediately terminates selection ownership.
