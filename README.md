@@ -108,10 +108,13 @@ The raw JSON dataset is **93.3 MB**. Distributing 95+ MB packages causes heavy b
 | Key | Action |
 |---|---|
 | `Enter` | **Open in default web browser** (stream / DhakaFlix player) |
-| `Alt + C` / `F2` / `Ctrl + Y` | **Copy direct URL** to system clipboard |
+| `Alt + C` / `F2` / `Ctrl + Y` | **Copy direct URL** to system clipboard (in Search focus) |
 | `Alt + P` / `F3` | **Stream in MPV / VLC** external player |
 | `Alt + D` / `F6` | **Download selected file** and open the live progress manager |
 | `F7` | Show or hide the bottom **Downloads** progress panel |
+| `Ctrl + W` | Switch focus between **Search** and **Downloads** panes |
+| `Alt + J` / `Alt + K` | Navigate the focused pane (results or downloads) |
+| `Alt + C` / `F8` | Cancel selected download in Downloads focus (keeps its `.part` file) |
 | `Alt + F` / `F4` | **Open parent folder** in browser |
 | `Alt + S` / `F5` / `Alt + I` | **Toggle sidebar** (details / inspector panel) |
 | `Tab` / `Shift + Tab` | Switch category tabs |
@@ -159,7 +162,7 @@ Options:
 
 ### Downloads
 
-Downloads use the app's built-in HTTP(S) worker, write to a temporary `.part` file, and resume it with an HTTP range request when the server supports it. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media.
+Downloads use the app's built-in HTTP(S) worker, write to a temporary `.part` file, and resume it with an HTTP range request when the server supports it. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media. Press `Ctrl+W` to focus the Downloads panel, select an entry with `Alt+J` / `Alt+K`, then press `Alt+C` or `F8` to cancel it; its partial file is retained for a later resume.
 
 For maximum multi-connection throughput outside the TUI, [aria2](https://aria2.github.io/) is an excellent companion: it is a lightweight multi-protocol downloader with multi-connection support and a JSON-RPC interface. The integrated downloader remains the default so sam-fuzzy works with no additional installation.
 
