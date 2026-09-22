@@ -1,5 +1,11 @@
-use sam_fuzzy::actions::{ActionOutcome, parse_size_hint};
+use sam_fuzzy::actions::{ActionOutcome, DownloadEvent, parse_size_hint, start_download};
 use sam_fuzzy::models::MediaItem;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::channel;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn sample_item() -> MediaItem {
     MediaItem {
@@ -37,6 +43,95 @@ fn test_parse_size_hint_supports_index_units_and_unknown_values() {
     assert_eq!(parse_size_hint(Some("512 B")), Some(512));
     assert_eq!(parse_size_hint(Some("unknown")), None);
     assert_eq!(parse_size_hint(None), None);
+}
+
+#[test]
+fn test_native_parallel_downloader_reassembles_http_ranges() {
+    let body: Vec<u8> = (0..(9 * 1024 * 1024 + 37))
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let expected_requests = 4; // One `bytes=0-0` probe plus three 4 MiB chunks.
+    let (url, server) = spawn_range_server(Arc::new(body.clone()), expected_requests);
+    let directory = std::env::temp_dir().join(format!(
+        "sam-fuzzy-native-download-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let (updates, events) = channel();
+    let cancellation = Arc::new(AtomicBool::new(false));
+    let destination = start_download(
+        1,
+        url,
+        "parallel.bin".to_string(),
+        directory.clone(),
+        updates,
+        cancellation,
+        Some(body.len() as u64),
+    )
+    .unwrap();
+
+    let event = loop {
+        match events.recv_timeout(Duration::from_secs(10)).unwrap() {
+            DownloadEvent::Completed { destination, .. } => break destination,
+            DownloadEvent::Failed { error, .. } => panic!("parallel download failed: {error}"),
+            DownloadEvent::Cancelled { .. } => panic!("parallel download was cancelled"),
+            DownloadEvent::Progress { .. } => {}
+        }
+    };
+
+    assert_eq!(event, destination);
+    assert_eq!(std::fs::read(destination).unwrap(), body);
+    server.join().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn spawn_range_server(
+    body: Arc<Vec<u8>>,
+    expected_requests: usize,
+) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for _ in 0..expected_requests {
+            let (mut stream, _) = listener.accept().unwrap();
+            respond_to_range_request(&mut stream, &body);
+        }
+    });
+    (format!("http://{address}/file.bin"), server)
+}
+
+fn respond_to_range_request(stream: &mut TcpStream, body: &[u8]) {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        let read = stream.read(&mut buffer).unwrap();
+        assert!(read > 0, "client closed request before headers completed");
+        request.extend_from_slice(&buffer[..read]);
+    }
+    let request = String::from_utf8(request).unwrap();
+    let range = request
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("range")
+                .then(|| value.trim().strip_prefix("bytes="))?
+        })
+        .expect("range request expected");
+    let (start, end) = range.split_once('-').unwrap();
+    let start: usize = start.parse().unwrap();
+    let end: usize = end.parse().unwrap();
+    let data = &body[start..=end];
+    write!(
+        stream,
+        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nConnection: close\r\n\r\n",
+        data.len(),
+        body.len()
+    )
+    .unwrap();
+    stream.write_all(data).unwrap();
 }
 
 #[test]
