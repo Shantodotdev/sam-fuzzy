@@ -41,6 +41,7 @@ Every release comes bundled as a self-contained executable with the full 104,650
 - 📐 **Streamlined Dual-Pane View**: Minimalist search results list with right-aligned resolution tags alongside an Inspector pane displaying release year, quality, file size, category, server mirror, and directory breadcrumbs with automatic text wrapping.
 - 🌐 **Instant Browser Launch**: Press `Enter` on any title to open its DhakaFlix stream or directory directly in your default browser.
 - 🎥 **MPV / VLC Player Integration**: Press `Alt+P` or `F3` to launch and stream videos directly in your desktop media player.
+- ⬇️ **Resumable Downloads with Live Progress**: Press `Alt+D` or `F6` to download the selected file into your platform Downloads folder. The expanding bottom panel shows byte-level progress, transfer rate, completion, and failures without covering search.
 - 📋 **One-Key Clipboard Integration**: Press `Alt+C`, `Ctrl+Y`, or `F2` to copy direct streaming HTTP links directly to your system clipboard.
 - 🗂️ **Categorical Navigation**: Instantly filter across `All`, `English`, `TV Series`, `Korean`, `Hindi`, and `Animation` tabs with `Tab` / `Shift+Tab`.
 
@@ -109,6 +110,8 @@ The raw JSON dataset is **93.3 MB**. Distributing 95+ MB packages causes heavy b
 | `Enter` | **Open in default web browser** (stream / DhakaFlix player) |
 | `Alt + C` / `F2` / `Ctrl + Y` | **Copy direct URL** to system clipboard |
 | `Alt + P` / `F3` | **Stream in MPV / VLC** external player |
+| `Alt + D` / `F6` | **Download selected file** and open the live progress manager |
+| `F7` | Show or hide the bottom **Downloads** progress panel |
 | `Alt + F` / `F4` | **Open parent folder** in browser |
 | `Alt + S` / `F5` / `Alt + I` | **Toggle sidebar** (details / inspector panel) |
 | `Tab` / `Shift + Tab` | Switch category tabs |
@@ -149,9 +152,16 @@ Options:
   -d, --data <DATA>          Custom path to dataset (.json or .json.gz)
   -q, --query <QUERY>        Initial search query (e.g. -q "witcher")
   -c, --category <CATEGORY>  Initial category filter (e.g. -c "Korean")
+  -o, --downloads-dir <DIR>  Directory used for downloaded media (default: platform Downloads folder)
   -h, --help                 Print help
   -V, --version              Print version
 ```
+
+### Downloads
+
+Downloads use the app's built-in HTTP(S) worker, write to a temporary `.part` file, and resume it with an HTTP range request when the server supports it. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media.
+
+For maximum multi-connection throughput outside the TUI, [aria2](https://aria2.github.io/) is an excellent companion: it is a lightweight multi-protocol downloader with multi-connection support and a JSON-RPC interface. The integrated downloader remains the default so sam-fuzzy works with no additional installation.
 
 ---
 
