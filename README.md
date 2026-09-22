@@ -162,9 +162,9 @@ Options:
 
 ### Downloads
 
-Downloads use the app's built-in HTTP(S) worker, write to a temporary `.part` file, and resume it with an HTTP range request when the server supports it. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media. Press `Ctrl+W` to focus the Downloads panel, select an entry with `Alt+J` / `Alt+K`, then press `Alt+C` or `F8` to cancel it; its partial file is retained for a later resume.
+Downloads write to a temporary `.part` file and resume interrupted transfers. When [`aria2c`](https://aria2.github.io/) is available on `PATH`, sam-fuzzy automatically uses it with eight connections per source, split ranges, retries, and resumable control metadata. This gives faster downloads from mirrors that support parallel HTTP ranges. If aria2 is not installed (or unavailable on a machine), the built-in HTTP(S) worker remains the zero-configuration fallback and resumes with HTTP range requests. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media.
 
-For maximum multi-connection throughput outside the TUI, [aria2](https://aria2.github.io/) is an excellent companion: it is a lightweight multi-protocol downloader with multi-connection support and a JSON-RPC interface. The integrated downloader remains the default so sam-fuzzy works with no additional installation.
+Press `Ctrl+W` to focus the Downloads panel, select an entry with `Alt+J` / `Alt+K`, then press `Alt+C` or `F8` to cancel it; its partial file is retained for a later resume. Multiple files can download concurrently, and each active aria2 transfer manages its own connections independently.
 
 ---
 
