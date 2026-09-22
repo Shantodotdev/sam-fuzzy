@@ -5,8 +5,8 @@
 //! - Banner & telemetry at the top (scales between full ASCII art and compact bar).
 //! - Centered search bar with fzf-style instant feedback.
 //! - Horizontal category navigation tabs.
-//! - Dual-pane workspace (results list + metadata inspector) on wide screens (>= 100 columns),
-//!   collapsing to a single full-width results pane on narrow terminals.
+//! - Dual-pane workspace (results list + metadata inspector) with toggleable sidebar (`Alt+S` / `F5`),
+//!   responsively scaling across wide and narrow terminal widths.
 //! - Global status notifications and keybindings footer.
 
 pub mod banner;
@@ -28,16 +28,19 @@ use ratatui::layout::{Constraint, Direction, Layout};
 pub fn render_ui(f: &mut Frame, app: &App) {
     let size = f.area();
 
-    // Primary vertical layout allocation:
-    // Uses a streamlined 1-line header to maximize vertical screen space for results.
+    // Responsive footer height:
+    // On wide terminals (>= 120 columns), all shortcuts fit on a single row.
+    // On narrower terminals (< 120 columns), allocate 2 rows so all shortcuts remain visible without cutoff.
+    let footer_height = if size.width >= 120 { 1 } else { 2 };
+
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Compact Header Banner
-            Constraint::Length(3), // Search Bar (input + rounded border)
-            Constraint::Length(1), // Category navigation pills
-            Constraint::Min(8),    // Results & Inspector workspace
-            Constraint::Length(1), // Footer status & keybindings
+            Constraint::Length(1),             // Compact Header Banner
+            Constraint::Length(3),             // Search Bar (input + rounded border)
+            Constraint::Length(1),             // Category navigation pills
+            Constraint::Min(8),                // Results & Inspector workspace
+            Constraint::Length(footer_height), // Footer status & keybindings
         ])
         .split(size);
 
@@ -51,21 +54,37 @@ pub fn render_ui(f: &mut Frame, app: &App) {
     f.render_widget(CategoryTabsWidget { app }, vertical_chunks[2]);
 
     // 4. Central Workspace:
-    // On wide terminals (>= 100 columns), split horizontally into Results (58%) and Inspector (42%).
-    // On narrow terminals (< 100 columns), dedicate full width to Results for readability.
-    if size.width >= 100 {
+    // Responsively decides whether to display the inspector sidebar:
+    // Default is open on wide terminals (>= 100 columns) and collapsed on narrow terminals (< 100 columns),
+    // but users can toggle it open or closed at any screen size via keyboard shortcut.
+    if app.is_sidebar_visible(size.width) {
+        // Responsively adapt horizontal proportions based on terminal width:
+        // - Wide screens (>= 100 cols): 58% Results, 42% Inspector
+        // - Medium screens (80..99 cols): 54% Results, 46% Inspector
+        // - Narrow screens (60..79 cols): 50% Results, 50% Inspector
+        // - Ultra-narrow screens (< 60 cols): 48% Results, 52% Inspector
+        let (results_pct, inspector_pct) = if size.width >= 100 {
+            (58, 42)
+        } else if size.width >= 80 {
+            (54, 46)
+        } else if size.width >= 60 {
+            (50, 50)
+        } else {
+            (48, 52)
+        };
+
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(58), // Search Results List
-                Constraint::Percentage(42), // Inspector Preview & Cheatsheet
+                Constraint::Percentage(results_pct),   // Search Results List
+                Constraint::Percentage(inspector_pct), // Inspector Preview & Details
             ])
             .split(vertical_chunks[3]);
 
         f.render_widget(ResultListWidget { app }, horizontal_chunks[0]);
         f.render_widget(InspectorWidget { app }, horizontal_chunks[1]);
     } else {
-        // Compact single-pane fallback
+        // Single-pane fallback: dedicate full workspace width to Results List
         f.render_widget(ResultListWidget { app }, vertical_chunks[3]);
     }
 

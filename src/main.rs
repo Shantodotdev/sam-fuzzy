@@ -244,6 +244,16 @@ fn run_app(
                     app.open_folder_in_browser();
                 }
 
+                // Toggle right-side inspector sidebar: Alt+S, Alt+I, Alt+B, Ctrl+B, or F5
+                (KeyModifiers::ALT, KeyCode::Char('s') | KeyCode::Char('S'))
+                | (KeyModifiers::ALT, KeyCode::Char('i') | KeyCode::Char('I'))
+                | (KeyModifiers::ALT, KeyCode::Char('b') | KeyCode::Char('B'))
+                | (KeyModifiers::CONTROL, KeyCode::Char('b') | KeyCode::Char('B'))
+                | (_, KeyCode::F(5)) => {
+                    let width = terminal.size().map(|s| s.width).unwrap_or(100);
+                    app.toggle_sidebar_with_width(width);
+                }
+
                 // Toggle help modal: F1
                 (_, KeyCode::F(1)) => {
                     app.toggle_help();

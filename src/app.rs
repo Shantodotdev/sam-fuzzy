@@ -76,6 +76,11 @@ pub struct App {
     /// Toggle flag for the keyboard help modal.
     pub show_help: bool,
 
+    /// Explicit override for sidebar (inspector) visibility.
+    /// `None` indicates responsive auto-visibility (visible when width >= 100).
+    /// `Some(true)` or `Some(false)` indicates user-toggled manual override.
+    pub show_sidebar: Option<bool>,
+
     /// Signals the main event loop to terminate cleanly.
     pub should_quit: bool,
 
@@ -99,6 +104,7 @@ impl App {
             search_latency: Duration::ZERO,
             status: None,
             show_help: false,
+            show_sidebar: None,
             should_quit: false,
             search_tx: None,
             search_rx: None,
@@ -413,5 +419,22 @@ impl App {
     /// Toggles the keyboard help modal.
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+
+    /// Toggles the right-side inspector sidebar visibility using the current terminal width.
+    pub fn toggle_sidebar(&mut self) {
+        let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(100);
+        self.toggle_sidebar_with_width(width);
+    }
+
+    /// Toggles the right-side inspector sidebar visibility based on an explicit width.
+    pub fn toggle_sidebar_with_width(&mut self, width: u16) {
+        let currently_visible = self.is_sidebar_visible(width);
+        self.show_sidebar = Some(!currently_visible);
+    }
+
+    /// Determines whether the sidebar should currently be rendered given terminal width.
+    pub fn is_sidebar_visible(&self, width: u16) -> bool {
+        self.show_sidebar.unwrap_or(width >= 100)
     }
 }

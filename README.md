@@ -110,6 +110,7 @@ The raw JSON dataset is **93.3 MB**. Distributing 95+ MB packages causes heavy b
 | `Alt + C` / `F2` / `Ctrl + Y` | **Copy direct URL** to system clipboard |
 | `Alt + P` / `F3` | **Stream in MPV / VLC** external player |
 | `Alt + F` / `F4` | **Open parent folder** in browser |
+| `Alt + S` / `F5` / `Alt + I` | **Toggle sidebar** (details / inspector panel) |
 | `Tab` / `Shift + Tab` | Switch category tabs |
 | `↑` / `↓` (`Ctrl + P` / `Ctrl + N`) | Navigate search results |
 | `PageUp` / `PageDown` | Scroll results page-by-page |

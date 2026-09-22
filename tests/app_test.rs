@@ -366,3 +366,247 @@ fn test_background_search_worker() {
     assert_eq!(app.results.len(), 1);
     assert_eq!(app.results[0].item.title, "Batman Begins");
 }
+
+#[test]
+fn test_sidebar_visibility_and_toggle() {
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+
+    // Initial default: None (responsive based on terminal width)
+    assert_eq!(app.show_sidebar, None);
+    assert!(!app.is_sidebar_visible(80)); // Narrow screen (< 100): hidden
+    assert!(app.is_sidebar_visible(100)); // Wide screen (>= 100): visible
+    assert!(app.is_sidebar_visible(120));
+
+    // Toggle on narrow screen (80 cols) -> opens sidebar
+    app.toggle_sidebar_with_width(80);
+    assert_eq!(app.show_sidebar, Some(true));
+    assert!(app.is_sidebar_visible(80));
+    assert!(app.is_sidebar_visible(60));
+
+    // Toggle again on narrow screen -> closes sidebar
+    app.toggle_sidebar_with_width(80);
+    assert_eq!(app.show_sidebar, Some(false));
+    assert!(!app.is_sidebar_visible(80));
+    assert!(!app.is_sidebar_visible(120));
+
+    // Toggle on wide screen (120 cols) when false -> opens sidebar
+    app.toggle_sidebar_with_width(120);
+    assert_eq!(app.show_sidebar, Some(true));
+    assert!(app.is_sidebar_visible(120));
+
+    // Reset to None (auto)
+    app.show_sidebar = None;
+
+    // Toggle on wide screen (120 cols) when auto -> closes sidebar
+    app.toggle_sidebar_with_width(120);
+    assert_eq!(app.show_sidebar, Some(false));
+    assert!(!app.is_sidebar_visible(120));
+}
+
+#[test]
+fn test_render_ui_responsive_sidebar_toggle() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use sam_fuzzy::ui::render_ui;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+
+    // 1. Narrow terminal (80 cols) - default sidebar closed
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("Batman Begins"));
+    assert!(!content.contains("MEDIA DETAILS"));
+
+    // 2. Toggle sidebar open on narrow terminal (80 cols)
+    app.toggle_sidebar_with_width(80);
+    terminal.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("Batman Begins"));
+    assert!(content.contains("MEDIA DETAILS"));
+
+    // 3. Toggle sidebar closed again on narrow terminal
+    app.toggle_sidebar_with_width(80);
+    terminal.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("Batman Begins"));
+    assert!(!content.contains("MEDIA DETAILS"));
+
+    // 4. Wide terminal (120 cols) - default sidebar open
+    app.show_sidebar = None;
+    let backend_wide = TestBackend::new(120, 24);
+    let mut terminal_wide = Terminal::new(backend_wide).unwrap();
+    terminal_wide.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal_wide.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("Batman Begins"));
+    assert!(content.contains("MEDIA DETAILS"));
+
+    // 5. Toggle sidebar closed on wide terminal
+    app.toggle_sidebar_with_width(120);
+    terminal_wide.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal_wide.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("Batman Begins"));
+    assert!(!content.contains("MEDIA DETAILS"));
+}
+
+#[test]
+fn test_inspector_widget_compact_rendering_on_very_narrow_area() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use sam_fuzzy::ui::components::InspectorWidget;
+
+    let engine = SearchEngine::new(sample_items());
+    let app = App::new(engine);
+
+    // Area width 22 -> inner_area width 20 (< 28 cols triggers compact labels)
+    let area = Rect::new(0, 0, 22, 15);
+    let mut buf = Buffer::empty(area);
+    let widget = InspectorWidget { app: &app };
+    widget.render(area, &mut buf);
+
+    let mut content = String::new();
+    for y in 0..area.height {
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell((x, y)) {
+                content.push_str(cell.symbol());
+            }
+        }
+        content.push('\n');
+    }
+
+    // Compact labels used when width is constrained
+    assert!(content.contains("Title:"));
+    assert!(content.contains("Year:"));
+    assert!(content.contains("Quality:"));
+    assert!(content.contains("Category:"));
+}
+
+#[test]
+fn test_footer_widget_two_row_layout_preserves_all_shortcuts() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+    use sam_fuzzy::ui::components::{FooterWidget, render_actions_line, render_nav_line};
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+
+    // 1. Actions line on 80 columns contains all 5 primary action shortcuts
+    let line1_80 = render_actions_line(80);
+    let text_actions: String = line1_80.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text_actions.chars().count() <= 80);
+    assert!(text_actions.contains("[Enter]"));
+    assert!(text_actions.contains("[Alt+C]"));
+    assert!(text_actions.contains("[Alt+P]"));
+    assert!(text_actions.contains("[Alt+S]"));
+    assert!(text_actions.contains("[Alt+F]"));
+
+    // 2. Navigation line on 80 columns contains all 4 nav/control shortcuts
+    let line2_80 = render_nav_line(80, None);
+    let text_nav: String = line2_80.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text_nav.chars().count() <= 80);
+    assert!(text_nav.contains("[Tab]"));
+    assert!(text_nav.contains("[↑/↓]"));
+    assert!(text_nav.contains("[Ctrl+U]"));
+    assert!(text_nav.contains("[Esc]"));
+
+    // 3. Render FooterWidget on an 80x2 buffer (2 rows)
+    let area_80 = Rect::new(0, 0, 80, 2);
+    let mut buf_80 = Buffer::empty(area_80);
+    let widget_80 = FooterWidget { app: &app };
+    widget_80.render(area_80, &mut buf_80);
+
+    let row0: String = (0..area_80.width)
+        .map(|x| buf_80.cell((x, 0)).unwrap().symbol().to_string())
+        .collect();
+    let row1: String = (0..area_80.width)
+        .map(|x| buf_80.cell((x, 1)).unwrap().symbol().to_string())
+        .collect();
+
+    // Row 0 has all media actions
+    assert!(row0.contains("[Enter]"));
+    assert!(row0.contains("[Alt+C]"));
+    assert!(row0.contains("[Alt+P]"));
+    assert!(row0.contains("[Alt+S]"));
+    assert!(row0.contains("[Alt+F]"));
+
+    // Row 1 has all navigation & quit
+    assert!(row1.contains("[Tab]"));
+    assert!(row1.contains("[↑/↓]"));
+    assert!(row1.contains("[Ctrl+U]"));
+    assert!(row1.contains("[Esc]"));
+
+    // 4. Active status toast notification on row 1 preserves shortcuts without overflow
+    app.set_status("Link copied to clipboard!", false);
+    let mut buf_status = Buffer::empty(area_80);
+    let widget_status = FooterWidget { app: &app };
+    widget_status.render(area_80, &mut buf_status);
+
+    let row1_status: String = (0..area_80.width)
+        .map(|x| buf_status.cell((x, 1)).unwrap().symbol().to_string())
+        .collect();
+    assert!(row1_status.contains("Link copied to clipboard!"));
+    assert!(row1_status.contains("[Esc]"));
+    assert!(row1_status.contains("[Tab]"));
+
+    // 5. On large width (>= 120 columns), all 9 shortcuts are displayed in a single row
+    use sam_fuzzy::ui::components::render_single_line;
+    let line_single = render_single_line(140, None);
+    let text_single: String = line_single
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(text_single.contains("[Enter]"));
+    assert!(text_single.contains("[Alt+C]"));
+    assert!(text_single.contains("[Alt+P]"));
+    assert!(text_single.contains("[Alt+S]"));
+    assert!(text_single.contains("[Alt+F]"));
+    assert!(text_single.contains("[Tab]"));
+    assert!(text_single.contains("[↑/↓]"));
+    assert!(text_single.contains("[Ctrl+U]"));
+    assert!(text_single.contains("[Esc]"));
+
+    // 6. Full UI render on a 140x24 terminal verifies single-row footer allocation
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use sam_fuzzy::ui::render_ui;
+
+    let backend_140 = TestBackend::new(140, 24);
+    let mut terminal_140 = Terminal::new(backend_140).unwrap();
+    terminal_140.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer_140 = terminal_140.backend().buffer();
+    // The bottom-most row (line index 23) contains all shortcuts in a single line
+    let bottom_row: String = (0..140)
+        .map(|x| buffer_140.cell((x, 23)).unwrap().symbol().to_string())
+        .collect();
+    assert!(bottom_row.contains("[Enter]"));
+    assert!(bottom_row.contains("[Alt+C]"));
+    assert!(bottom_row.contains("[Alt+S]"));
+    assert!(bottom_row.contains("[Tab]"));
+    assert!(bottom_row.contains("[Esc]"));
+}

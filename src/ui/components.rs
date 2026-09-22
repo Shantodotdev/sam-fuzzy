@@ -275,11 +275,21 @@ pub struct InspectorWidget<'a> {
 
 impl<'a> Widget for InspectorWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width < 2 || area.height < 2 {
+            return;
+        }
+
+        let title = if area.width < 18 {
+            " DETAILS "
+        } else {
+            " MEDIA DETAILS "
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_border())
-            .title(Span::styled(" MEDIA DETAILS ", style_header()));
+            .title(Span::styled(title, style_header()));
 
         let inner_area = block.inner(area);
         block.render(area, buf);
@@ -295,9 +305,24 @@ impl<'a> Widget for InspectorWidget<'a> {
 
         let mut lines = Vec::new();
 
+        // Responsive labels: adapt prefix width when inner space is constrained (< 28 cols)
+        let compact = inner_area.width < 28;
+        let lbl_title = if compact { "Title: " } else { " Title    : " };
+        let lbl_year = if compact { "Year: " } else { " Year     : " };
+        let lbl_quality = if compact { "Quality: " } else { " Quality  : " };
+        let lbl_size = if compact { "Size: " } else { " Size     : " };
+        let lbl_category = if compact {
+            "Category: "
+        } else {
+            " Category : "
+        };
+        let lbl_server = if compact { "Server: " } else { " Server   : " };
+        let lbl_file = if compact { "File: " } else { " File     : " };
+        let lbl_folder = if compact { "Folder: " } else { " Folder   : " };
+
         // 1. Primary Title
         lines.push(Line::from(vec![
-            Span::styled(" Title    : ", style_header()),
+            Span::styled(lbl_title, style_header()),
             Span::styled(
                 item.display_title(),
                 Style::default()
@@ -312,52 +337,52 @@ impl<'a> Widget for InspectorWidget<'a> {
             .map(|y| y.to_string())
             .unwrap_or_else(|| "N/A".to_string());
         lines.push(Line::from(vec![
-            Span::styled(" Year     : ", style_dim()),
+            Span::styled(lbl_year, style_dim()),
             Span::styled(year_str, style_badge_green()),
         ]));
 
         // 3. Quality Profile
         lines.push(Line::from(vec![
-            Span::styled(" Quality  : ", style_dim()),
+            Span::styled(lbl_quality, style_dim()),
             Span::styled(&item.quality, style_badge_cyan()),
         ]));
 
         // 4. File Size (if available)
         if let Some(size) = &item.size {
             lines.push(Line::from(vec![
-                Span::styled(" Size     : ", style_dim()),
+                Span::styled(lbl_size, style_dim()),
                 Span::styled(size, style_badge_green()),
             ]));
         }
 
         // 5. Category
         lines.push(Line::from(vec![
-            Span::styled(" Category : ", style_dim()),
+            Span::styled(lbl_category, style_dim()),
             Span::styled(&item.category, style_badge_yellow()),
         ]));
 
-        // 5. Server Mirror Host
+        // 6. Server Mirror Host
         lines.push(Line::from(vec![
-            Span::styled(" Server   : ", style_dim()),
+            Span::styled(lbl_server, style_dim()),
             Span::styled(&item.server, style_dim()),
         ]));
 
         lines.push(Line::raw(""));
 
-        // 6. Physical Filename
+        // 7. Physical Filename
         lines.push(Line::from(vec![
-            Span::styled(" File     : ", style_dim()),
+            Span::styled(lbl_file, style_dim()),
             Span::styled(&item.filename, Style::default().fg(COLOR_WHITE)),
         ]));
 
-        // 7. Directory Folder Hierarchy
+        // 8. Directory Folder Hierarchy
         if let Some((folder, _)) = item.path.rsplit_once('/') {
             let display_folder = folder
                 .strip_prefix(&item.server)
                 .map(|s| s.trim_start_matches('/'))
                 .unwrap_or(folder);
             lines.push(Line::from(vec![
-                Span::styled(" Folder   : ", style_dim()),
+                Span::styled(lbl_folder, style_dim()),
                 Span::styled(display_folder, style_dim()),
             ]));
         }
@@ -368,52 +393,445 @@ impl<'a> Widget for InspectorWidget<'a> {
     }
 }
 
-/// Bottom status line displaying transient toast notifications and keybindings.
+struct ActionItem {
+    key: &'static str,
+    key_compact: &'static str,
+    full: &'static str,
+    short: &'static str,
+    tiny: &'static str,
+}
+
+const ACTION_ITEMS: [ActionItem; 5] = [
+    ActionItem {
+        key: "[Enter] ",
+        key_compact: "[↵] ",
+        full: "Browser",
+        short: "Browser",
+        tiny: "Open",
+    },
+    ActionItem {
+        key: "[Alt+C] ",
+        key_compact: "[A-C] ",
+        full: "Copy",
+        short: "Copy",
+        tiny: "Copy",
+    },
+    ActionItem {
+        key: "[Alt+P] ",
+        key_compact: "[A-P] ",
+        full: "Player",
+        short: "Play",
+        tiny: "Play",
+    },
+    ActionItem {
+        key: "[Alt+S] ",
+        key_compact: "[A-S] ",
+        full: "Sidebar",
+        short: "Sidebar",
+        tiny: "Side",
+    },
+    ActionItem {
+        key: "[Alt+F] ",
+        key_compact: "[A-F] ",
+        full: "Folder",
+        short: "Folder",
+        tiny: "Dir",
+    },
+];
+
+struct NavItem {
+    key: &'static str,
+    key_compact: &'static str,
+    full: &'static str,
+    short: &'static str,
+    tiny: &'static str,
+}
+
+const NAV_ITEMS: [NavItem; 4] = [
+    NavItem {
+        key: "[Tab] ",
+        key_compact: "[Tab] ",
+        full: "Category",
+        short: "Cat",
+        tiny: "Cat",
+    },
+    NavItem {
+        key: "[↑/↓] ",
+        key_compact: "[↑/↓] ",
+        full: "Navigate",
+        short: "Nav",
+        tiny: "Nav",
+    },
+    NavItem {
+        key: "[Ctrl+U] ",
+        key_compact: "[^U] ",
+        full: "Clear",
+        short: "Clear",
+        tiny: "Clear",
+    },
+    NavItem {
+        key: "[Esc] ",
+        key_compact: "[Esc] ",
+        full: "Quit",
+        short: "Quit",
+        tiny: "Quit",
+    },
+];
+
+/// Renders row 1 of the footer containing all primary media action shortcuts.
+pub fn render_actions_line(width: usize) -> Line<'static> {
+    struct ActionTier {
+        use_compact_key: bool,
+        label_selector: fn(&ActionItem) -> &'static str,
+        spacious: bool,
+    }
+
+    let tiers = [
+        ActionTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: true, // 78 cols
+        },
+        ActionTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: false, // 74 cols
+        },
+        ActionTier {
+            use_compact_key: false,
+            label_selector: |item| item.short,
+            spacious: false, // 72 cols
+        },
+        ActionTier {
+            use_compact_key: false,
+            label_selector: |item| item.tiny,
+            spacious: false, // 63 cols
+        },
+        ActionTier {
+            use_compact_key: true,
+            label_selector: |item| item.tiny,
+            spacious: false, // 51 cols
+        },
+    ];
+
+    let chosen = tiers
+        .iter()
+        .find(|t| {
+            let spacing = if t.spacious { 2 } else { 1 };
+            let mut w = 0;
+            for (i, item) in ACTION_ITEMS.iter().enumerate() {
+                let key = if t.use_compact_key {
+                    item.key_compact
+                } else {
+                    item.key
+                };
+                let label = (t.label_selector)(item);
+                w += key.chars().count() + label.chars().count();
+                if i + 1 < ACTION_ITEMS.len() {
+                    w += spacing;
+                }
+            }
+            w <= width
+        })
+        .unwrap_or(&tiers[tiers.len() - 1]);
+
+    let sep = if chosen.spacious { "  " } else { " " };
+    let mut spans = Vec::with_capacity(ACTION_ITEMS.len() * 3);
+    for (i, item) in ACTION_ITEMS.iter().enumerate() {
+        let key = if chosen.use_compact_key {
+            item.key_compact
+        } else {
+            item.key
+        };
+        let label = (chosen.label_selector)(item);
+        spans.push(Span::styled(key, style_header()));
+        spans.push(Span::styled(label, Style::default().fg(COLOR_WHITE)));
+        if i + 1 < ACTION_ITEMS.len() {
+            spans.push(Span::styled(sep, Style::default().fg(COLOR_WHITE)));
+        }
+    }
+
+    Line::from(spans)
+}
+
+/// Renders row 2 of the footer containing navigation, clear, quit, and transient status notifications.
+pub fn render_nav_line(width: usize, status: Option<(&str, bool)>) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut status_width = 0;
+
+    if let Some((status_msg, is_err)) = status {
+        let status_style = if is_err {
+            Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(COLOR_NEON_GREEN)
+                .add_modifier(Modifier::BOLD)
+        };
+        let formatted = format!(" {} ", status_msg);
+        status_width = formatted.chars().count() + 3; // + " │ "
+        spans.push(Span::styled(formatted, status_style));
+        spans.push(Span::styled(" │ ", style_dim()));
+    }
+
+    let rem_width = width.saturating_sub(status_width);
+
+    struct NavTier {
+        use_compact_key: bool,
+        label_selector: fn(&NavItem) -> &'static str,
+        spacious: bool,
+    }
+
+    let tiers = [
+        NavTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: true, // 58 cols
+        },
+        NavTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: false, // 55 cols
+        },
+        NavTier {
+            use_compact_key: false,
+            label_selector: |item| item.short,
+            spacious: false, // 45 cols
+        },
+        NavTier {
+            use_compact_key: true,
+            label_selector: |item| item.tiny,
+            spacious: false, // 41 cols
+        },
+    ];
+
+    let chosen = tiers
+        .iter()
+        .find(|t| {
+            let spacing = if t.spacious { 2 } else { 1 };
+            let mut w = 0;
+            for (i, item) in NAV_ITEMS.iter().enumerate() {
+                let key = if t.use_compact_key {
+                    item.key_compact
+                } else {
+                    item.key
+                };
+                let label = (t.label_selector)(item);
+                w += key.chars().count() + label.chars().count();
+                if i + 1 < NAV_ITEMS.len() {
+                    w += spacing;
+                }
+            }
+            w <= rem_width
+        })
+        .unwrap_or(&tiers[tiers.len() - 1]);
+
+    let sep = if chosen.spacious { "  " } else { " " };
+    for (i, item) in NAV_ITEMS.iter().enumerate() {
+        let key = if chosen.use_compact_key {
+            item.key_compact
+        } else {
+            item.key
+        };
+        let label = (chosen.label_selector)(item);
+        spans.push(Span::styled(key, style_header()));
+        spans.push(Span::styled(label, Style::default().fg(COLOR_WHITE)));
+        if i + 1 < NAV_ITEMS.len() {
+            spans.push(Span::styled(sep, Style::default().fg(COLOR_WHITE)));
+        }
+    }
+
+    Line::from(spans)
+}
+
+struct SingleItem {
+    key: &'static str,
+    key_compact: &'static str,
+    full: &'static str,
+    short: &'static str,
+    tiny: &'static str,
+}
+
+const ALL_9_ITEMS: [SingleItem; 9] = [
+    SingleItem {
+        key: "[Enter] ",
+        key_compact: "[Enter] ",
+        full: "Browser",
+        short: "Browser",
+        tiny: "Open",
+    },
+    SingleItem {
+        key: "[Alt+C] ",
+        key_compact: "[Alt+C] ",
+        full: "Copy",
+        short: "Copy",
+        tiny: "Copy",
+    },
+    SingleItem {
+        key: "[Alt+P] ",
+        key_compact: "[Alt+P] ",
+        full: "Player",
+        short: "Play",
+        tiny: "Play",
+    },
+    SingleItem {
+        key: "[Alt+S] ",
+        key_compact: "[Alt+S] ",
+        full: "Sidebar",
+        short: "Sidebar",
+        tiny: "Side",
+    },
+    SingleItem {
+        key: "[Alt+F] ",
+        key_compact: "[Alt+F] ",
+        full: "Folder",
+        short: "Folder",
+        tiny: "Dir",
+    },
+    SingleItem {
+        key: "[Tab] ",
+        key_compact: "[Tab] ",
+        full: "Category",
+        short: "Cat",
+        tiny: "Cat",
+    },
+    SingleItem {
+        key: "[↑/↓] ",
+        key_compact: "[↑/↓] ",
+        full: "Navigate",
+        short: "Nav",
+        tiny: "Nav",
+    },
+    SingleItem {
+        key: "[Ctrl+U] ",
+        key_compact: "[^U] ",
+        full: "Clear",
+        short: "Clear",
+        tiny: "Clear",
+    },
+    SingleItem {
+        key: "[Esc] ",
+        key_compact: "[Esc] ",
+        full: "Quit",
+        short: "Quit",
+        tiny: "Quit",
+    },
+];
+
+/// Renders all 9 shortcuts in a single responsive row when large width is available.
+pub fn render_single_line(width: usize, status: Option<(&str, bool)>) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut status_width = 0;
+
+    if let Some((status_msg, is_err)) = status {
+        let status_style = if is_err {
+            Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(COLOR_NEON_GREEN)
+                .add_modifier(Modifier::BOLD)
+        };
+        let formatted = format!(" {} ", status_msg);
+        status_width = formatted.chars().count() + 3; // + " │ "
+        spans.push(Span::styled(formatted, status_style));
+        spans.push(Span::styled(" │ ", style_dim()));
+    }
+
+    let rem_width = width.saturating_sub(status_width);
+
+    struct SingleTier {
+        use_compact_key: bool,
+        label_selector: fn(&SingleItem) -> &'static str,
+        spacious: bool,
+    }
+
+    let tiers = [
+        SingleTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: true, // 128 cols
+        },
+        SingleTier {
+            use_compact_key: false,
+            label_selector: |item| item.full,
+            spacious: false, // 120 cols
+        },
+        SingleTier {
+            use_compact_key: false,
+            label_selector: |item| item.short,
+            spacious: false, // 108 cols
+        },
+        SingleTier {
+            use_compact_key: true,
+            label_selector: |item| item.tiny,
+            spacious: false, // 101 cols
+        },
+    ];
+
+    let chosen = tiers
+        .iter()
+        .find(|t| {
+            let spacing = if t.spacious { 2 } else { 1 };
+            let mut w = 0;
+            for (i, item) in ALL_9_ITEMS.iter().enumerate() {
+                let key = if t.use_compact_key {
+                    item.key_compact
+                } else {
+                    item.key
+                };
+                let label = (t.label_selector)(item);
+                w += key.chars().count() + label.chars().count();
+                if i + 1 < ALL_9_ITEMS.len() {
+                    w += spacing;
+                }
+            }
+            w <= rem_width
+        })
+        .unwrap_or(&tiers[tiers.len() - 1]);
+
+    let sep = if chosen.spacious { "  " } else { " " };
+    for (i, item) in ALL_9_ITEMS.iter().enumerate() {
+        let key = if chosen.use_compact_key {
+            item.key_compact
+        } else {
+            item.key
+        };
+        let label = (chosen.label_selector)(item);
+        spans.push(Span::styled(key, style_header()));
+        spans.push(Span::styled(label, Style::default().fg(COLOR_WHITE)));
+        if i + 1 < ALL_9_ITEMS.len() {
+            spans.push(Span::styled(sep, Style::default().fg(COLOR_WHITE)));
+        }
+    }
+
+    Line::from(spans)
+}
+
+/// Bottom status line displaying all 9 keybindings alongside toast notifications.
 ///
-/// If an action was just triggered (e.g. copied to clipboard or opened in browser),
-/// an ephemeral status message is displayed with a 4-second TTL. Otherwise, displays
-/// the full global keyboard navigation guide.
+/// Responsively renders in:
+/// - One row when there is enough space (width >= 120 columns).
+/// - Two rows on narrower terminals (< 120 columns) to prevent any cutoff.
 pub struct FooterWidget<'a> {
     pub app: &'a App,
 }
 
 impl<'a> Widget for FooterWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let mut spans = Vec::new();
-
-        // Render transient notification badge if within its 4-second expiration window
-        if let Some((status_msg, is_err)) = self.app.active_status() {
-            let status_style = if is_err {
-                Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(COLOR_NEON_GREEN)
-                    .add_modifier(Modifier::BOLD)
-            };
-            spans.push(Span::styled(format!(" {} ", status_msg), status_style));
-            spans.push(Span::styled(" │ ", style_dim()));
+        if area.width < 5 || area.height < 1 {
+            return;
         }
 
-        // Global keybindings cheat ribbon
-        spans.extend(vec![
-            Span::styled("[Enter] ", style_header()),
-            Span::styled("Browser  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Alt+C] ", style_header()),
-            Span::styled("Copy  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Alt+P] ", style_header()),
-            Span::styled("Player  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Alt+F] ", style_header()),
-            Span::styled("Folder  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Tab] ", style_header()),
-            Span::styled("Category  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[↑/↓] ", style_header()),
-            Span::styled("Navigate  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Ctrl+U] ", style_header()),
-            Span::styled("Clear  ", Style::default().fg(COLOR_WHITE)),
-            Span::styled("[Esc] ", style_header()),
-            Span::styled("Quit", Style::default().fg(COLOR_WHITE)),
-        ]);
+        let width = area.width as usize;
+        let status = self.app.active_status();
 
-        Paragraph::new(Line::from(spans)).render(area, buf);
+        let lines = if area.height >= 2 {
+            let line1 = render_actions_line(width);
+            let line2 = render_nav_line(width, status);
+            vec![line1, line2]
+        } else {
+            vec![render_single_line(width, status)]
+        };
+
+        Paragraph::new(lines).render(area, buf);
     }
 }
