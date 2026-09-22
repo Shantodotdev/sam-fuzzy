@@ -45,6 +45,10 @@ struct Args {
     /// Initial category filter tab to activate on launch.
     #[arg(short, long)]
     category: Option<String>,
+
+    /// Directory used for downloaded media (defaults to your platform Downloads folder).
+    #[arg(short = 'o', long = "downloads-dir")]
+    downloads_dir: Option<PathBuf>,
 }
 
 /// Searches for candidate local dataset files (`.json.gz` or `.json`) on disk.
@@ -142,6 +146,10 @@ fn main() -> anyhow::Result<()> {
     let engine = SearchEngine::new(items);
     let mut app = App::new(engine);
 
+    if let Some(directory) = args.downloads_dir {
+        app.set_download_dir(directory);
+    }
+
     // Apply CLI query filter if provided
     if let Some(q) = args.query {
         app.query = q;
@@ -184,6 +192,7 @@ fn run_app(
     loop {
         // Poll for completed background search results without blocking
         app.poll_search_results();
+        app.poll_downloads();
 
         // Redraw current terminal frame
         terminal.draw(|f| render_ui(f, app))?;
@@ -236,6 +245,17 @@ fn run_app(
                 | (KeyModifiers::CONTROL, KeyCode::Char('o') | KeyCode::Char('O'))
                 | (_, KeyCode::F(3)) => {
                     app.play_selected_video();
+                }
+
+                // Download selected file and reveal its live progress: Alt+D or F6
+                (KeyModifiers::ALT, KeyCode::Char('d') | KeyCode::Char('D'))
+                | (_, KeyCode::F(6)) => {
+                    app.download_selected();
+                }
+
+                // Toggle the bottom download manager panel: F7
+                (_, KeyCode::F(7)) => {
+                    app.toggle_downloads();
                 }
 
                 // Open parent folder listing in web browser: Alt+F or F4

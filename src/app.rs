@@ -7,9 +7,13 @@
 //! - Non-blocking background search worker thread management.
 //! - Global actions dispatch (browser launch, clipboard copy, video playback).
 
-use crate::actions::{ActionOutcome, copy_to_clipboard, launch_player, open_in_browser};
+use crate::actions::{
+    ActionOutcome, DownloadEvent, copy_to_clipboard, default_download_dir, launch_player,
+    open_in_browser, start_download,
+};
 use crate::fuzzy::SearchEngine;
 use crate::models::MediaItem;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -34,6 +38,57 @@ pub struct DisplayResult {
     pub item: MediaItem,
     pub score: u64,
     pub indices: Vec<u32>,
+}
+
+/// Current lifecycle state of a managed file download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadState {
+    /// The worker was created and is connecting to the source.
+    Queued,
+    /// Bytes are currently arriving from the source server.
+    Downloading,
+    /// The completed file was atomically moved into the selected download directory.
+    Completed,
+    /// The transfer stopped before completion.
+    Failed(String),
+}
+
+/// Render-ready state for one file download in the bottom downloads panel.
+#[derive(Debug, Clone)]
+pub struct DownloadTask {
+    /// Stable ID for matching worker updates to this task.
+    pub id: u64,
+    /// Source filename shown in the TUI.
+    pub filename: String,
+    /// Final path after the transfer completes.
+    pub destination: PathBuf,
+    /// Current transfer lifecycle state.
+    pub state: DownloadState,
+    /// Number of bytes written so far.
+    pub downloaded: u64,
+    /// Expected full size, when exposed by the server.
+    pub total: Option<u64>,
+    /// Smoothed most-recent transfer rate in bytes/sec.
+    pub bytes_per_second: f64,
+    last_sample_bytes: u64,
+    last_sample_at: Instant,
+}
+
+impl DownloadTask {
+    /// Creates a newly queued task before its background worker reports progress.
+    pub fn queued(id: u64, filename: String, destination: PathBuf) -> Self {
+        Self {
+            id,
+            filename,
+            destination,
+            state: DownloadState::Queued,
+            downloaded: 0,
+            total: None,
+            bytes_per_second: 0.0,
+            last_sample_bytes: 0,
+            last_sample_at: Instant::now(),
+        }
+    }
 }
 
 /// Internal request payload sent to the background search thread.
@@ -76,6 +131,15 @@ pub struct App {
     /// Toggle flag for the keyboard help modal.
     pub show_help: bool,
 
+    /// Whether the bottom downloads progress panel is visible.
+    pub show_downloads: bool,
+
+    /// User-configured target directory for downloaded media.
+    pub download_dir: PathBuf,
+
+    /// Recent and active background transfers displayed by the downloads panel.
+    pub downloads: Vec<DownloadTask>,
+
     /// Explicit override for sidebar (inspector) visibility.
     /// `None` indicates responsive auto-visibility (visible when width >= 100).
     /// `Some(true)` or `Some(false)` indicates user-toggled manual override.
@@ -89,12 +153,16 @@ pub struct App {
     search_rx: Option<Receiver<SearchResponse>>,
     request_counter: u64,
     pending_request_id: u64,
+    download_tx: Sender<DownloadEvent>,
+    download_rx: Receiver<DownloadEvent>,
+    download_counter: u64,
 }
 
 impl App {
     /// Creates a new application state and executes an initial empty search
     /// to populate the default view with all available items.
     pub fn new(engine: SearchEngine) -> Self {
+        let (download_tx, download_rx) = channel::<DownloadEvent>();
         let mut app = Self {
             engine: Arc::new(engine),
             query: String::new(),
@@ -104,15 +172,154 @@ impl App {
             search_latency: Duration::ZERO,
             status: None,
             show_help: false,
+            show_downloads: false,
+            download_dir: default_download_dir(),
+            downloads: Vec::new(),
             show_sidebar: None,
             should_quit: false,
             search_tx: None,
             search_rx: None,
             request_counter: 0,
             pending_request_id: 0,
+            download_tx,
+            download_rx,
+            download_counter: 0,
         };
         app.perform_search_sync();
         app
+    }
+
+    /// Sets the directory where new downloads are written.
+    pub fn set_download_dir(&mut self, directory: PathBuf) {
+        self.download_dir = directory;
+    }
+
+    /// Applies any queued file-transfer updates without blocking UI input or rendering.
+    pub fn poll_downloads(&mut self) {
+        while let Ok(event) = self.download_rx.try_recv() {
+            match event {
+                DownloadEvent::Progress {
+                    id,
+                    downloaded,
+                    total,
+                } => {
+                    if let Some(task) = self.downloads.iter_mut().find(|task| task.id == id) {
+                        let elapsed = task.last_sample_at.elapsed().as_secs_f64();
+                        if elapsed > 0.0 {
+                            task.bytes_per_second =
+                                downloaded.saturating_sub(task.last_sample_bytes) as f64 / elapsed;
+                        }
+                        task.downloaded = downloaded;
+                        task.total = total.or(task.total);
+                        task.last_sample_bytes = downloaded;
+                        task.last_sample_at = Instant::now();
+                        task.state = DownloadState::Downloading;
+                    }
+                }
+                DownloadEvent::Completed {
+                    id,
+                    destination,
+                    downloaded,
+                } => {
+                    if let Some(task) = self.downloads.iter_mut().find(|task| task.id == id) {
+                        task.destination = destination;
+                        task.downloaded = downloaded;
+                        task.total = Some(downloaded);
+                        task.bytes_per_second = 0.0;
+                        task.state = DownloadState::Completed;
+                    }
+                }
+                DownloadEvent::Failed { id, error } => {
+                    if let Some(task) = self.downloads.iter_mut().find(|task| task.id == id) {
+                        task.bytes_per_second = 0.0;
+                        task.state = DownloadState::Failed(error);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts downloading the selected file and opens the live bottom downloads panel.
+    ///
+    /// Directories are deliberately rejected because their server listings do not identify a
+    /// single file to save.
+    pub fn download_selected(&mut self) -> Option<ActionOutcome> {
+        let item = self.selected_item()?.clone();
+        if !item.is_file {
+            let outcome = ActionOutcome::Error("Select a media file to download.".to_string());
+            self.set_status(&outcome.message(), true);
+            return Some(outcome);
+        }
+
+        if self.downloads.iter().any(|task| {
+            task.filename == item.filename
+                && matches!(
+                    task.state,
+                    DownloadState::Queued | DownloadState::Downloading
+                )
+        }) {
+            self.show_downloads = true;
+            let outcome = ActionOutcome::DownloadAlreadyQueued(item.filename);
+            self.set_status(&outcome.message(), false);
+            return Some(outcome);
+        }
+
+        self.download_counter = self.download_counter.saturating_add(1);
+        let id = self.download_counter;
+        let filename = item.filename.clone();
+        match start_download(
+            id,
+            item.url,
+            filename.clone(),
+            self.download_dir.clone(),
+            self.download_tx.clone(),
+        ) {
+            Ok(destination) => {
+                self.downloads
+                    .push(DownloadTask::queued(id, filename, destination.clone()));
+                self.show_downloads = true;
+                let outcome = ActionOutcome::DownloadStarted(destination);
+                self.set_status(&outcome.message(), false);
+                Some(outcome)
+            }
+            Err(error) => {
+                let outcome = ActionOutcome::Error(format!("Could not start download: {error}"));
+                self.set_status(&outcome.message(), true);
+                Some(outcome)
+            }
+        }
+    }
+
+    /// Toggles the bottom downloads progress panel.
+    pub fn toggle_downloads(&mut self) {
+        self.show_downloads = !self.show_downloads;
+    }
+
+    /// Preferred height for the expandable downloads panel.
+    ///
+    /// Each visible download consumes four rows (state/name, progress bar,
+    /// transfer details, spacer); the panel stops growing when `max_height`
+    /// would otherwise take space reserved for search results.
+    pub fn downloads_panel_height(&self, max_height: u16) -> u16 {
+        if !self.show_downloads {
+            return 0;
+        }
+
+        let task_rows = self.downloads.len().max(1).saturating_mul(4) as u16;
+        (task_rows + 2).min(max_height)
+    }
+
+    /// Number of queued or actively transferring files.
+    pub fn active_download_count(&self) -> usize {
+        self.downloads
+            .iter()
+            .filter(|task| {
+                matches!(
+                    task.state,
+                    DownloadState::Queued | DownloadState::Downloading
+                )
+            })
+            .count()
     }
 
     /// Spawns a dedicated background search worker thread communicating via lock-free channels.
