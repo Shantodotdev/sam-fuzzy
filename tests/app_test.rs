@@ -493,7 +493,8 @@ fn test_downloads_panel_renders_below_search_without_covering_it() {
     assert!(content.contains("DOWNLOADS"));
     assert!(content.contains("No downloads yet."));
     assert!(content.contains("Alt+D or F6"));
-    assert!(content.contains("FUZZY SEARCH (fzf-style)"));
+    assert!(content.contains("FUZZY SEARCH"));
+    assert!(!content.contains("FOCUSED"));
 }
 
 #[test]
@@ -521,6 +522,149 @@ fn test_downloads_panel_grows_for_additional_tasks_until_its_layout_budget() {
     ));
     assert_eq!(app.downloads_panel_height(20), 10);
     assert_eq!(app.downloads_panel_height(8), 8);
+}
+
+#[test]
+fn test_footer_shows_mode_aware_download_controls_below_the_downloads_panel() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use sam_fuzzy::app::DownloadTask;
+    use sam_fuzzy::ui::render_ui;
+    use std::path::PathBuf;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+    app.show_downloads = true;
+    app.downloads.push(DownloadTask::queued(
+        1,
+        "Download.mkv".to_string(),
+        PathBuf::from("/tmp/Download.mkv"),
+    ));
+
+    let backend = TestBackend::new(140, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| render_ui(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("SEARCH"));
+    assert!(content.contains("[Alt+D/F6] Download selected"));
+    assert!(content.contains("[F7] Show panel"));
+    assert!(content.contains("[Ctrl+W] Focus downloads"));
+    assert!(content.contains("[Alt+J/K] Navigate results"));
+
+    let bottom_row: String = (0..buffer.area.width)
+        .map(|x| buffer.cell((x, buffer.area.height - 1)).unwrap().symbol())
+        .collect();
+    assert!(bottom_row.contains("Alt+D/F6"));
+
+    app.toggle_active_pane();
+    terminal.draw(|frame| render_ui(frame, &app)).unwrap();
+    let focused_buffer = terminal.backend().buffer();
+    let focused_content: String = (0..focused_buffer.area.height)
+        .flat_map(|y| {
+            (0..focused_buffer.area.width)
+                .map(move |x| focused_buffer.cell((x, y)).unwrap().symbol())
+        })
+        .collect();
+    assert!(focused_content.contains("DOWNLOADS"));
+    assert!(focused_content.contains("[Alt+C/F8] Cancel selected"));
+}
+
+#[test]
+fn test_download_notification_is_rendered_below_download_shortcuts() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use sam_fuzzy::app::DownloadTask;
+    use sam_fuzzy::ui::render_ui;
+    use std::path::PathBuf;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+    app.show_downloads = true;
+    app.downloads.push(DownloadTask::queued(
+        1,
+        "Download.mkv".to_string(),
+        PathBuf::from("/tmp/Download.mkv"),
+    ));
+    app.toggle_active_pane();
+    app.set_status("Download started: Download.mkv", false);
+
+    let backend = TestBackend::new(140, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| render_ui(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let shortcut_row: String = (0..buffer.area.width)
+        .map(|x| buffer.cell((x, buffer.area.height - 2)).unwrap().symbol())
+        .collect();
+    let notification_row: String = (0..buffer.area.width)
+        .map(|x| buffer.cell((x, buffer.area.height - 1)).unwrap().symbol())
+        .collect();
+
+    assert!(shortcut_row.contains("[Alt+C/F8] Cancel selected"));
+    assert!(notification_row.contains("NOTICE"));
+    assert!(notification_row.contains("Download started: Download.mkv"));
+}
+
+#[test]
+fn test_selected_download_can_be_cancelled_without_affecting_other_tasks() {
+    use sam_fuzzy::app::{DownloadState, DownloadTask};
+    use std::path::PathBuf;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+    app.downloads.push(DownloadTask::queued(
+        1,
+        "First.mkv".to_string(),
+        PathBuf::from("/tmp/First.mkv"),
+    ));
+    app.downloads.push(DownloadTask::queued(
+        2,
+        "Second.mkv".to_string(),
+        PathBuf::from("/tmp/Second.mkv"),
+    ));
+    app.selected_download_index = 1;
+
+    let outcome = app.cancel_selected_download().unwrap();
+
+    assert!(
+        outcome
+            .message()
+            .contains("Cancelling download: Second.mkv")
+    );
+    assert_eq!(app.downloads[0].state, DownloadState::Queued);
+    assert_eq!(app.downloads[1].state, DownloadState::Cancelling);
+    assert_eq!(app.active_download_count(), 2);
+}
+
+#[test]
+fn test_focus_switches_between_search_and_downloads_only_when_available() {
+    use sam_fuzzy::app::{ActivePane, DownloadTask};
+    use std::path::PathBuf;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+
+    // A hidden or empty panel cannot take focus.
+    app.toggle_active_pane();
+    assert_eq!(app.active_pane, ActivePane::Search);
+
+    app.show_downloads = true;
+    app.downloads.push(DownloadTask::queued(
+        1,
+        "Download.mkv".to_string(),
+        PathBuf::from("/tmp/Download.mkv"),
+    ));
+
+    app.toggle_active_pane();
+    assert_eq!(app.active_pane, ActivePane::Downloads);
+    assert!(app.is_downloads_focused());
+
+    app.toggle_active_pane();
+    assert_eq!(app.active_pane, ActivePane::Search);
+    assert!(app.is_search_focused());
 }
 
 #[test]
