@@ -158,11 +158,35 @@ pub fn default_download_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("Downloads"))
 }
 
-/// Starts a resumable HTTP(S) file transfer on a detached worker thread.
+/// Parses the human-readable size stored in the media index into bytes.
 ///
-/// Downloads are written to `<name>.part` first. If a prior partial file exists,
-/// the worker requests the remaining range and continues it when the server supports
-/// HTTP range requests. The final rename only happens after the full response is written.
+/// The crawler uses binary-style units (`MiB`/`GiB`) and occasionally emits
+/// decimal-style aliases (`MB`/`GB`); both are treated as powers of 1024 so the
+/// progress bar remains consistent with the byte formatter in the TUI.
+pub fn parse_size_hint(value: Option<&str>) -> Option<u64> {
+    let value = value?.trim();
+    let mut parts = value.split_whitespace();
+    let amount = parts.next()?.parse::<f64>().ok()?;
+    if !amount.is_finite() || amount < 0.0 {
+        return None;
+    }
+    let unit = parts.next().unwrap_or("B").to_ascii_lowercase();
+    let multiplier = match unit.as_str() {
+        "b" => 1_u64,
+        "k" | "kb" | "kib" => 1024,
+        "m" | "mb" | "mib" => 1024_u64.pow(2),
+        "g" | "gb" | "gib" => 1024_u64.pow(3),
+        "t" | "tb" | "tib" => 1024_u64.pow(4),
+        _ => return None,
+    };
+    Some((amount * multiplier as f64).round() as u64)
+}
+
+/// Starts a resumable file transfer on a detached worker thread.
+///
+/// When aria2 is available, the worker uses several HTTP connections per source;
+/// otherwise it falls back to the built-in resumable HTTP(S) implementation.
+/// Both backends write to `<name>.part` first and only rename after completion.
 pub fn start_download(
     id: u64,
     url: String,
@@ -170,23 +194,42 @@ pub fn start_download(
     directory: PathBuf,
     updates: Sender<DownloadEvent>,
     cancellation: Arc<AtomicBool>,
+    total_hint: Option<u64>,
 ) -> anyhow::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     let destination = available_destination(&directory, &filename);
     let part_path = part_path_for(&destination);
     let worker_destination = destination.clone();
+    let aria2 = find_aria2_executable();
 
     thread::Builder::new()
         .name(format!("download-{id}"))
         .spawn(move || {
-            match download_to_path(
-                id,
-                &url,
-                &part_path,
-                &worker_destination,
-                &updates,
-                &cancellation,
-            ) {
+            let context = DownloadContext {
+                updates: &updates,
+                cancellation: &cancellation,
+                total_hint,
+            };
+            let result = match aria2 {
+                Some(executable) => download_with_aria2(
+                    executable,
+                    id,
+                    &url,
+                    &part_path,
+                    &worker_destination,
+                    &context,
+                ),
+                None => download_to_path(
+                    id,
+                    &url,
+                    &part_path,
+                    &worker_destination,
+                    &updates,
+                    &cancellation,
+                    total_hint,
+                ),
+            };
+            match result {
                 Ok(Some(downloaded)) => {
                     let _ = updates.send(DownloadEvent::Cancelled { id, downloaded });
                 }
@@ -201,6 +244,23 @@ pub fn start_download(
         })?;
 
     Ok(destination)
+}
+
+/// Resolves an optional aria2 executable from `PATH`.
+///
+/// aria2 is deliberately an optional acceleration backend. When it is absent,
+/// the in-process resumable HTTP worker remains the zero-configuration fallback.
+fn find_aria2_executable() -> Option<&'static str> {
+    ["aria2c", "aria2"].into_iter().find(|candidate| {
+        Command::new(candidate)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
 }
 
 fn available_destination(directory: &Path, filename: &str) -> PathBuf {
@@ -240,6 +300,121 @@ fn part_path_for(destination: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
+fn aria2_control_path(part_path: &Path) -> PathBuf {
+    let mut value = part_path.as_os_str().to_owned();
+    value.push(".aria2");
+    PathBuf::from(value)
+}
+
+struct DownloadContext<'a> {
+    updates: &'a Sender<DownloadEvent>,
+    cancellation: &'a AtomicBool,
+    total_hint: Option<u64>,
+}
+
+/// Starts an aria2 transfer with several HTTP connections per source.
+///
+/// aria2 writes to the same `.part` convention as the built-in backend. Its
+/// control file makes interrupted multi-connection transfers resumable, and
+/// the completed `.part` is promoted only after aria2 exits successfully.
+fn download_with_aria2(
+    executable: &str,
+    id: u64,
+    url: &str,
+    part_path: &Path,
+    destination: &Path,
+    context: &DownloadContext<'_>,
+) -> anyhow::Result<Option<u64>> {
+    if context.cancellation.load(Ordering::Relaxed) {
+        return Ok(Some(file_size(part_path)));
+    }
+
+    let directory = part_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("download path has no parent directory"))?;
+    let output_name = part_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("download path has no file name"))?;
+    let mut command = Command::new(executable);
+    command
+        .arg("--continue=true")
+        .arg("--auto-file-renaming=false")
+        .arg("--file-allocation=none")
+        .arg("--max-connection-per-server=8")
+        .arg("--split=8")
+        .arg("--min-split-size=1M")
+        .arg("--max-tries=3")
+        .arg("--retry-wait=2")
+        .arg("--connect-timeout=15")
+        .arg("--timeout=15")
+        .arg("--summary-interval=1")
+        .arg("--download-result=hide")
+        .arg("--dir")
+        .arg(directory)
+        .arg("--out")
+        .arg(output_name)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command.spawn().map_err(|error| {
+        anyhow::anyhow!("failed to start {executable} multi-connection backend: {error}")
+    })?;
+    let mut last_report = Instant::now() - Duration::from_secs(1);
+
+    let _ = context.updates.send(DownloadEvent::Progress {
+        id,
+        downloaded: file_size(part_path),
+        total: context.total_hint,
+    });
+
+    loop {
+        if context.cancellation.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Some(file_size(part_path)));
+        }
+
+        if let Some(status) = child.try_wait()? {
+            let downloaded = file_size(part_path);
+            let _ = context.updates.send(DownloadEvent::Progress {
+                id,
+                downloaded,
+                total: context.total_hint,
+            });
+            if context.cancellation.load(Ordering::Relaxed) {
+                return Ok(Some(downloaded));
+            }
+            if !status.success() {
+                return Err(anyhow::anyhow!("{executable} exited with status {status}"));
+            }
+            fs::rename(part_path, destination)?;
+            let _ = fs::remove_file(aria2_control_path(part_path));
+            let _ = context.updates.send(DownloadEvent::Completed {
+                id,
+                destination: destination.to_path_buf(),
+                downloaded,
+            });
+            return Ok(None);
+        }
+
+        if last_report.elapsed() >= Duration::from_millis(150) {
+            let _ = context.updates.send(DownloadEvent::Progress {
+                id,
+                downloaded: file_size(part_path),
+                total: context.total_hint,
+            });
+            last_report = Instant::now();
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn file_size(path: &Path) -> u64 {
+    fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
 fn download_to_path(
     id: u64,
     url: &str,
@@ -247,6 +422,7 @@ fn download_to_path(
     destination: &Path,
     updates: &Sender<DownloadEvent>,
     cancellation: &AtomicBool,
+    total_hint: Option<u64>,
 ) -> anyhow::Result<Option<u64>> {
     if cancellation.load(Ordering::Relaxed) {
         return Ok(Some(
@@ -270,7 +446,8 @@ fn download_to_path(
     let starting_bytes = if resumed { existing_bytes } else { 0 };
     let total = response
         .content_length()
-        .map(|remaining| remaining.saturating_add(starting_bytes));
+        .map(|remaining| remaining.saturating_add(starting_bytes))
+        .or(total_hint);
 
     let mut output = if resumed {
         OpenOptions::new()
