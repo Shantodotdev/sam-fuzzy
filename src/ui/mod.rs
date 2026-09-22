@@ -7,7 +7,7 @@
 //! - Horizontal category navigation tabs.
 //! - Dual-pane workspace (results list + metadata inspector) with toggleable sidebar (`Alt+S` / `F5`),
 //!   responsively scaling across wide and narrow terminal widths.
-//! - Global status notifications and keybindings footer.
+//! - Expandable downloads panel above global status notifications and keybindings.
 
 pub mod banner;
 pub mod components;
@@ -16,7 +16,8 @@ pub mod theme;
 use crate::app::App;
 use banner::BannerWidget;
 use components::{
-    CategoryTabsWidget, FooterWidget, InspectorWidget, ResultListWidget, SearchBarWidget,
+    CategoryTabsWidget, DownloadsWidget, FooterWidget, InspectorWidget, ResultListWidget,
+    SearchBarWidget,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -32,15 +33,21 @@ pub fn render_ui(f: &mut Frame, app: &App) {
     // On wide terminals (>= 120 columns), all shortcuts fit on a single row.
     // On narrower terminals (< 120 columns), allocate 2 rows so all shortcuts remain visible without cutoff.
     let footer_height = if size.width >= 120 { 1 } else { 2 };
+    // Keep the main search workspace at least eight rows tall. Any spare vertical space is
+    // available to the downloads panel, which adds four rows per visible transfer.
+    let fixed_height = 1 + 3 + 1 + footer_height + 8;
+    let downloads_budget = size.height.saturating_sub(fixed_height);
+    let downloads_height = app.downloads_panel_height(downloads_budget);
 
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),             // Compact Header Banner
-            Constraint::Length(3),             // Search Bar (input + rounded border)
-            Constraint::Length(1),             // Category navigation pills
-            Constraint::Min(8),                // Results & Inspector workspace
-            Constraint::Length(footer_height), // Footer status & keybindings
+            Constraint::Length(1),                // Compact Header Banner
+            Constraint::Length(3),                // Search Bar (input + rounded border)
+            Constraint::Length(1),                // Category navigation pills
+            Constraint::Min(8),                   // Results & Inspector workspace
+            Constraint::Length(downloads_height), // Expandable downloads manager
+            Constraint::Length(footer_height),    // Footer status & keybindings
         ])
         .split(size);
 
@@ -88,6 +95,11 @@ pub fn render_ui(f: &mut Frame, app: &App) {
         f.render_widget(ResultListWidget { app }, vertical_chunks[3]);
     }
 
-    // 5. Bottom Status and Keybindings Ribbon
-    f.render_widget(FooterWidget { app }, vertical_chunks[4]);
+    // 5. Download manager is always below the search workspace, never obscuring its input.
+    if downloads_height > 0 {
+        f.render_widget(DownloadsWidget { app }, vertical_chunks[4]);
+    }
+
+    // 6. Bottom Status and Keybindings Ribbon
+    f.render_widget(FooterWidget { app }, vertical_chunks[5]);
 }

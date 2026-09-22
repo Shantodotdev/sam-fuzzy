@@ -473,6 +473,57 @@ fn test_render_ui_responsive_sidebar_toggle() {
 }
 
 #[test]
+fn test_downloads_panel_renders_below_search_without_covering_it() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use sam_fuzzy::ui::render_ui;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+    app.show_downloads = true;
+
+    let backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| buffer.cell((x, y)).unwrap().symbol()))
+        .collect();
+
+    assert!(content.contains("DOWNLOADS"));
+    assert!(content.contains("No downloads yet."));
+    assert!(content.contains("Alt+D or F6"));
+    assert!(content.contains("FUZZY SEARCH (fzf-style)"));
+}
+
+#[test]
+fn test_downloads_panel_grows_for_additional_tasks_until_its_layout_budget() {
+    use sam_fuzzy::app::DownloadTask;
+    use std::path::PathBuf;
+
+    let engine = SearchEngine::new(sample_items());
+    let mut app = App::new(engine);
+    app.show_downloads = true;
+
+    assert_eq!(app.downloads_panel_height(20), 6);
+
+    app.downloads.push(DownloadTask::queued(
+        1,
+        "First.mkv".to_string(),
+        PathBuf::from("/tmp/First.mkv"),
+    ));
+    assert_eq!(app.downloads_panel_height(20), 6);
+
+    app.downloads.push(DownloadTask::queued(
+        2,
+        "Second.mkv".to_string(),
+        PathBuf::from("/tmp/Second.mkv"),
+    ));
+    assert_eq!(app.downloads_panel_height(20), 10);
+    assert_eq!(app.downloads_panel_height(8), 8);
+}
+
+#[test]
 fn test_inspector_widget_compact_rendering_on_very_narrow_area() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;

@@ -3,7 +3,7 @@
 //! Each widget implements Ratatui's [`Widget`] trait, drawing directly into
 //! the frame buffer with zero allocations in tight render loops.
 
-use crate::app::{App, CATEGORIES};
+use crate::app::{App, CATEGORIES, DownloadState};
 use crate::ui::theme::*;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -273,6 +273,155 @@ pub struct InspectorWidget<'a> {
     pub app: &'a App,
 }
 
+/// Expandable bottom download manager with live transfer progress.
+pub struct DownloadsWidget<'a> {
+    pub app: &'a App,
+}
+
+impl<'a> Widget for DownloadsWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let active = self.app.active_download_count();
+        let title = format!(" DOWNLOADS  •  {active} ACTIVE  •  F7 TO HIDE ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(style_border_focused())
+            .title(Span::styled(title, style_header()));
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if self.app.downloads.is_empty() {
+            Paragraph::new(vec![
+                Line::raw(""),
+                Line::from(Span::styled("  No downloads yet.", style_dim())),
+                Line::from(Span::styled(
+                    "  Select a file and press Alt+D or F6 to save it here.",
+                    style_dim(),
+                )),
+                Line::raw(""),
+                Line::from(vec![
+                    Span::styled("  Target: ", style_header()),
+                    Span::styled(
+                        self.app.download_dir.display().to_string(),
+                        style_badge_cyan(),
+                    ),
+                ]),
+            ])
+            .render(inner, buf);
+            return;
+        }
+
+        let max_rows = inner.height as usize / 4;
+        let start = self.app.downloads.len().saturating_sub(max_rows.max(1));
+        let mut lines = Vec::new();
+        for task in self.app.downloads.iter().skip(start) {
+            let state = match &task.state {
+                DownloadState::Queued => ("● QUEUED", style_badge_yellow()),
+                DownloadState::Downloading => ("● DOWNLOADING", style_badge_cyan()),
+                DownloadState::Completed => ("✓ COMPLETE", style_badge_green()),
+                DownloadState::Failed(_) => (
+                    "✕ FAILED",
+                    Style::default().fg(COLOR_RED).add_modifier(Modifier::BOLD),
+                ),
+            };
+            let filename = truncate_text(&task.filename, inner.width.saturating_sub(18) as usize);
+            lines.push(Line::from(vec![
+                Span::styled("  ", style_dim()),
+                Span::styled(state.0, state.1),
+                Span::styled("  ", style_dim()),
+                Span::styled(
+                    filename,
+                    Style::default()
+                        .fg(COLOR_WHITE)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            let bar_width = inner.width.saturating_sub(4) as usize;
+            let fraction = task
+                .total
+                .filter(|total| *total > 0)
+                .map(|total| task.downloaded as f64 / total as f64)
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
+            lines.push(Line::from(Span::styled(
+                format!("  {}", progress_bar(fraction, bar_width.saturating_sub(2))),
+                if matches!(task.state, DownloadState::Failed(_)) {
+                    Style::default().fg(COLOR_RED)
+                } else {
+                    style_header()
+                },
+            )));
+
+            let progress = match task.total {
+                Some(total) => format!(
+                    "{} / {}  {:>5.1}%",
+                    format_bytes(task.downloaded),
+                    format_bytes(total),
+                    fraction * 100.0
+                ),
+                None => format!(
+                    "{} downloaded  •  size unknown",
+                    format_bytes(task.downloaded)
+                ),
+            };
+            let detail = match &task.state {
+                DownloadState::Downloading if task.bytes_per_second > 0.0 => {
+                    format!(
+                        "{}  •  {}/s",
+                        progress,
+                        format_bytes(task.bytes_per_second as u64)
+                    )
+                }
+                DownloadState::Failed(error) => truncate_text(error, bar_width),
+                DownloadState::Completed => format!("{}  •  saved", progress),
+                _ => progress,
+            };
+            lines.push(Line::from(Span::styled(format!("  {detail}"), style_dim())));
+            lines.push(Line::raw(""));
+        }
+        Paragraph::new(lines).render(inner, buf);
+    }
+}
+
+fn progress_bar(fraction: f64, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let filled = (fraction * width as f64).round() as usize;
+    format!(
+        "[{}{}]",
+        "█".repeat(filled.min(width)),
+        "░".repeat(width.saturating_sub(filled))
+    )
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn truncate_text(text: &str, width: usize) -> String {
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".to_string();
+    }
+    format!("{}…", text.chars().take(width - 1).collect::<String>())
+}
+
 impl<'a> Widget for InspectorWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < 2 || area.height < 2 {
@@ -401,7 +550,7 @@ struct ActionItem {
     tiny: &'static str,
 }
 
-const ACTION_ITEMS: [ActionItem; 5] = [
+const ACTION_ITEMS: [ActionItem; 6] = [
     ActionItem {
         key: "[Enter] ",
         key_compact: "[↵] ",
@@ -422,6 +571,13 @@ const ACTION_ITEMS: [ActionItem; 5] = [
         full: "Player",
         short: "Play",
         tiny: "Play",
+    },
+    ActionItem {
+        key: "[Alt+D] ",
+        key_compact: "[A-D] ",
+        full: "Download",
+        short: "Download",
+        tiny: "DL",
     },
     ActionItem {
         key: "[Alt+S] ",
@@ -506,6 +662,11 @@ pub fn render_actions_line(width: usize) -> Line<'static> {
             use_compact_key: false,
             label_selector: |item| item.tiny,
             spacious: false, // 63 cols
+        },
+        ActionTier {
+            use_compact_key: false,
+            label_selector: |item| item.tiny,
+            spacious: false,
         },
         ActionTier {
             use_compact_key: true,
@@ -651,7 +812,7 @@ struct SingleItem {
     tiny: &'static str,
 }
 
-const ALL_9_ITEMS: [SingleItem; 9] = [
+const ALL_9_ITEMS: [SingleItem; 10] = [
     SingleItem {
         key: "[Enter] ",
         key_compact: "[Enter] ",
@@ -672,6 +833,13 @@ const ALL_9_ITEMS: [SingleItem; 9] = [
         full: "Player",
         short: "Play",
         tiny: "Play",
+    },
+    SingleItem {
+        key: "[Alt+D] ",
+        key_compact: "[A-D] ",
+        full: "Download",
+        short: "Download",
+        tiny: "DL",
     },
     SingleItem {
         key: "[Alt+S] ",
@@ -717,7 +885,7 @@ const ALL_9_ITEMS: [SingleItem; 9] = [
     },
 ];
 
-/// Renders all 9 shortcuts in a single responsive row when large width is available.
+/// Renders all shortcuts in a single responsive row when large width is available.
 pub fn render_single_line(width: usize, status: Option<(&str, bool)>) -> Line<'static> {
     let mut spans = Vec::new();
     let mut status_width = 0;
@@ -806,7 +974,7 @@ pub fn render_single_line(width: usize, status: Option<(&str, bool)>) -> Line<'s
     Line::from(spans)
 }
 
-/// Bottom status line displaying all 9 keybindings alongside toast notifications.
+/// Bottom status line displaying all keybindings alongside toast notifications.
 ///
 /// Responsively renders in:
 /// - One row when there is enough space (width >= 120 columns).
