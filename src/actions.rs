@@ -90,13 +90,15 @@ pub fn open_in_browser(url: &str) -> ActionOutcome {
     }
 }
 
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -182,11 +184,11 @@ pub fn parse_size_hint(value: Option<&str>) -> Option<u64> {
     Some((amount * multiplier as f64).round() as u64)
 }
 
-/// Starts a resumable file transfer on a detached worker thread.
+/// Starts a native resumable file transfer on a detached worker thread.
 ///
-/// When aria2 is available, the worker uses several HTTP connections per source;
-/// otherwise it falls back to the built-in resumable HTTP(S) implementation.
-/// Both backends write to `<name>.part` first and only rename after completion.
+/// Servers that support HTTP byte ranges use up to eight parallel Rust worker
+/// threads. Servers without range support use the single-connection fallback.
+/// Both modes write to `<name>.part` first and only rename after completion.
 pub fn start_download(
     id: u64,
     url: String,
@@ -200,34 +202,34 @@ pub fn start_download(
     let destination = available_destination(&directory, &filename);
     let part_path = part_path_for(&destination);
     let worker_destination = destination.clone();
-    let aria2 = find_aria2_executable();
 
     thread::Builder::new()
         .name(format!("download-{id}"))
         .spawn(move || {
             let context = DownloadContext {
                 updates: &updates,
-                cancellation: &cancellation,
+                cancellation: Arc::clone(&cancellation),
                 total_hint,
             };
-            let result = match aria2 {
-                Some(executable) => download_with_aria2(
-                    executable,
-                    id,
-                    &url,
-                    &part_path,
-                    &worker_destination,
-                    &context,
-                ),
-                None => download_to_path(
+            let result = match download_with_parallel_ranges(
+                id,
+                &url,
+                &part_path,
+                &worker_destination,
+                &context,
+            ) {
+                Ok(ParallelDownloadResult::Completed) => Ok(None),
+                Ok(ParallelDownloadResult::Cancelled(downloaded)) => Ok(Some(downloaded)),
+                Ok(ParallelDownloadResult::Unsupported) => download_to_path(
                     id,
                     &url,
                     &part_path,
                     &worker_destination,
                     &updates,
-                    &cancellation,
-                    total_hint,
+                    &context.cancellation,
+                    context.total_hint,
                 ),
+                Err(error) => Err(error),
             };
             match result {
                 Ok(Some(downloaded)) => {
@@ -244,23 +246,6 @@ pub fn start_download(
         })?;
 
     Ok(destination)
-}
-
-/// Resolves an optional aria2 executable from `PATH`.
-///
-/// aria2 is deliberately an optional acceleration backend. When it is absent,
-/// the in-process resumable HTTP worker remains the zero-configuration fallback.
-fn find_aria2_executable() -> Option<&'static str> {
-    ["aria2c", "aria2"].into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    })
 }
 
 fn available_destination(directory: &Path, filename: &str) -> PathBuf {
@@ -300,119 +285,419 @@ fn part_path_for(destination: &Path) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn aria2_control_path(part_path: &Path) -> PathBuf {
+fn file_size(path: &Path) -> u64 {
+    fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+}
+
+fn parallel_state_path(part_path: &Path) -> PathBuf {
     let mut value = part_path.as_os_str().to_owned();
-    value.push(".aria2");
+    value.push(".sam-fuzzy.json");
     PathBuf::from(value)
 }
 
 struct DownloadContext<'a> {
     updates: &'a Sender<DownloadEvent>,
-    cancellation: &'a AtomicBool,
+    cancellation: Arc<AtomicBool>,
     total_hint: Option<u64>,
 }
 
-/// Starts an aria2 transfer with several HTTP connections per source.
-///
-/// aria2 writes to the same `.part` convention as the built-in backend. Its
-/// control file makes interrupted multi-connection transfers resumable, and
-/// the completed `.part` is promoted only after aria2 exits successfully.
-fn download_with_aria2(
-    executable: &str,
+const PARALLEL_CONNECTIONS: usize = 8;
+const RANGE_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ByteRange {
+    start: u64,
+    end: u64,
+}
+
+impl ByteRange {
+    fn len(&self) -> u64 {
+        self.end.saturating_sub(self.start).saturating_add(1)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ParallelState {
+    url: String,
+    total: u64,
+    completed: Vec<ByteRange>,
+}
+
+enum ParallelDownloadResult {
+    Completed,
+    Cancelled(u64),
+    Unsupported,
+}
+
+enum RangeEvent {
+    Completed(ByteRange),
+    Failed(String),
+}
+
+struct RangeWorkerContext {
+    client: reqwest::blocking::Client,
+    url: String,
+    total: u64,
+    output: Arc<Mutex<File>>,
+    cancellation: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    downloaded: Arc<AtomicU64>,
+}
+
+/// Downloads supported HTTP byte ranges concurrently without requiring an
+/// external executable. The state file records finished ranges so a cancelled
+/// transfer can continue without trusting sparse-file length alone.
+fn download_with_parallel_ranges(
     id: u64,
     url: &str,
     part_path: &Path,
     destination: &Path,
     context: &DownloadContext<'_>,
-) -> anyhow::Result<Option<u64>> {
+) -> anyhow::Result<ParallelDownloadResult> {
     if context.cancellation.load(Ordering::Relaxed) {
-        return Ok(Some(file_size(part_path)));
+        return Ok(ParallelDownloadResult::Cancelled(file_size(part_path)));
     }
 
-    let directory = part_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("download path has no parent directory"))?;
-    let output_name = part_path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("download path has no file name"))?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--continue=true")
-        .arg("--auto-file-renaming=false")
-        .arg("--file-allocation=none")
-        .arg("--max-connection-per-server=8")
-        .arg("--split=8")
-        .arg("--min-split-size=1M")
-        .arg("--max-tries=3")
-        .arg("--retry-wait=2")
-        .arg("--connect-timeout=15")
-        .arg("--timeout=15")
-        .arg("--summary-interval=1")
-        .arg("--download-result=hide")
-        .arg("--dir")
-        .arg(directory)
-        .arg("--out")
-        .arg(output_name)
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .build()?;
+    let Some(total) = probe_range_total(&client, url)? else {
+        return Ok(ParallelDownloadResult::Unsupported);
+    };
+    if total == 0 {
+        return Ok(ParallelDownloadResult::Unsupported);
+    }
 
-    let mut child = command.spawn().map_err(|error| {
-        anyhow::anyhow!("failed to start {executable} multi-connection backend: {error}")
-    })?;
+    let state_path = parallel_state_path(part_path);
+    let mut state = load_parallel_state(&state_path, part_path, url, total)?;
+    state.completed = normalize_ranges(state.completed, total);
+    persist_parallel_state(&state_path, &state)?;
+
+    let completed_bytes = ranges_len(&state.completed);
+    let pending = split_missing_ranges(total, &state.completed);
+    if pending.is_empty() {
+        fs::rename(part_path, destination)?;
+        let _ = fs::remove_file(state_path);
+        let _ = context.updates.send(DownloadEvent::Completed {
+            id,
+            destination: destination.to_path_buf(),
+            downloaded: total,
+        });
+        return Ok(ParallelDownloadResult::Completed);
+    }
+
+    let output = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .read(true)
+        .truncate(false)
+        .open(part_path)?;
+    output.set_len(total)?;
+    let output = Arc::new(Mutex::new(output));
+    let pending_count = pending.len();
+    let tasks = Arc::new(Mutex::new(VecDeque::from(pending)));
+    let stop = Arc::new(AtomicBool::new(false));
+    let downloaded = Arc::new(AtomicU64::new(completed_bytes));
+    let (event_tx, event_rx) = channel();
+    let worker_count = PARALLEL_CONNECTIONS.min(pending_count);
+    let mut workers = Vec::with_capacity(worker_count);
+    for worker_index in 0..worker_count {
+        let worker_context = RangeWorkerContext {
+            client: client.clone(),
+            url: url.to_string(),
+            total,
+            output: Arc::clone(&output),
+            cancellation: Arc::clone(&context.cancellation),
+            stop: Arc::clone(&stop),
+            downloaded: Arc::clone(&downloaded),
+        };
+        let worker_tasks = Arc::clone(&tasks);
+        let worker_events = event_tx.clone();
+        workers.push(
+            thread::Builder::new()
+                .name(format!("range-{id}-{worker_index}"))
+                .spawn(move || range_worker(worker_tasks, worker_events, worker_context))?,
+        );
+    }
+    drop(event_tx);
+
     let mut last_report = Instant::now() - Duration::from_secs(1);
-
     let _ = context.updates.send(DownloadEvent::Progress {
         id,
-        downloaded: file_size(part_path),
-        total: context.total_hint,
+        downloaded: completed_bytes,
+        total: Some(total),
     });
 
-    loop {
-        if context.cancellation.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Ok(Some(file_size(part_path)));
-        }
-
-        if let Some(status) = child.try_wait()? {
-            let downloaded = file_size(part_path);
-            let _ = context.updates.send(DownloadEvent::Progress {
-                id,
-                downloaded,
-                total: context.total_hint,
-            });
-            if context.cancellation.load(Ordering::Relaxed) {
-                return Ok(Some(downloaded));
+    let mut finished = 0_usize;
+    let mut failure = None;
+    while finished < pending_count
+        && failure.is_none()
+        && !context.cancellation.load(Ordering::Relaxed)
+    {
+        match event_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(RangeEvent::Completed(range)) => {
+                state.completed.push(range);
+                state.completed = normalize_ranges(state.completed, total);
+                persist_parallel_state(&state_path, &state)?;
+                finished = finished.saturating_add(1);
             }
-            if !status.success() {
-                return Err(anyhow::anyhow!("{executable} exited with status {status}"));
+            Ok(RangeEvent::Failed(error)) => {
+                failure = Some(error);
+                stop.store(true, Ordering::Relaxed);
             }
-            fs::rename(part_path, destination)?;
-            let _ = fs::remove_file(aria2_control_path(part_path));
-            let _ = context.updates.send(DownloadEvent::Completed {
-                id,
-                destination: destination.to_path_buf(),
-                downloaded,
-            });
-            return Ok(None);
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
-
         if last_report.elapsed() >= Duration::from_millis(150) {
             let _ = context.updates.send(DownloadEvent::Progress {
                 id,
-                downloaded: file_size(part_path),
-                total: context.total_hint,
+                downloaded: downloaded.load(Ordering::Relaxed),
+                total: Some(total),
             });
             last_report = Instant::now();
         }
-        thread::sleep(Duration::from_millis(100));
+    }
+    stop.store(true, Ordering::Relaxed);
+    for worker in workers {
+        let _ = worker.join();
+    }
+    drop(output);
+
+    let current_downloaded = downloaded.load(Ordering::Relaxed);
+    let _ = context.updates.send(DownloadEvent::Progress {
+        id,
+        downloaded: current_downloaded,
+        total: Some(total),
+    });
+    if let Some(error) = failure {
+        return Err(anyhow::anyhow!(error));
+    }
+    if context.cancellation.load(Ordering::Relaxed) || finished < pending_count {
+        return Ok(ParallelDownloadResult::Cancelled(current_downloaded));
+    }
+
+    fs::rename(part_path, destination)?;
+    let _ = fs::remove_file(state_path);
+    let _ = context.updates.send(DownloadEvent::Completed {
+        id,
+        destination: destination.to_path_buf(),
+        downloaded: total,
+    });
+    Ok(ParallelDownloadResult::Completed)
+}
+
+fn probe_range_total(client: &reqwest::blocking::Client, url: &str) -> anyhow::Result<Option<u64>> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .send()?
+        .error_for_status()?;
+    if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Ok(None);
+    }
+    let total = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range)
+        .map(|(_, _, total)| total);
+    Ok(total)
+}
+
+fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
+    let value = value.strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+}
+
+fn load_parallel_state(
+    state_path: &Path,
+    part_path: &Path,
+    url: &str,
+    total: u64,
+) -> anyhow::Result<ParallelState> {
+    match fs::read(state_path) {
+        Ok(bytes) => match serde_json::from_slice::<ParallelState>(&bytes) {
+            Ok(state)
+                if state.url == url
+                    && state.total == total
+                    && fs::metadata(part_path)
+                        .map(|metadata| metadata.len() == total)
+                        .unwrap_or(false) =>
+            {
+                Ok(state)
+            }
+            Ok(_) | Err(_) => Ok(ParallelState {
+                url: url.to_string(),
+                total,
+                completed: Vec::new(),
+            }),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let prefix = fs::metadata(part_path)
+                .map(|metadata| metadata.len().min(total))
+                .unwrap_or(0);
+            Ok(ParallelState {
+                url: url.to_string(),
+                total,
+                completed: (prefix > 0)
+                    .then_some(ByteRange {
+                        start: 0,
+                        end: prefix.saturating_sub(1),
+                    })
+                    .into_iter()
+                    .collect(),
+            })
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
-fn file_size(path: &Path) -> u64 {
-    fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+fn persist_parallel_state(path: &Path, state: &ParallelState) -> anyhow::Result<()> {
+    let encoded = serde_json::to_vec(state)?;
+    fs::write(path, encoded)?;
+    Ok(())
+}
+
+fn normalize_ranges(mut ranges: Vec<ByteRange>, total: u64) -> Vec<ByteRange> {
+    ranges.retain(|range| range.start <= range.end && range.start < total);
+    for range in &mut ranges {
+        range.end = range.end.min(total.saturating_sub(1));
+    }
+    ranges.sort_by_key(|range| range.start);
+    let mut merged = Vec::<ByteRange>::new();
+    for range in ranges {
+        if let Some(previous) = merged.last_mut()
+            && range.start <= previous.end.saturating_add(1)
+        {
+            previous.end = previous.end.max(range.end);
+        } else {
+            merged.push(range);
+        }
+    }
+    merged
+}
+
+fn ranges_len(ranges: &[ByteRange]) -> u64 {
+    ranges.iter().map(ByteRange::len).sum()
+}
+
+fn split_missing_ranges(total: u64, completed: &[ByteRange]) -> Vec<ByteRange> {
+    let mut missing = Vec::new();
+    let mut cursor = 0_u64;
+    for range in completed {
+        if cursor < range.start {
+            push_chunks(&mut missing, cursor, range.start.saturating_sub(1));
+        }
+        cursor = range.end.saturating_add(1);
+    }
+    if cursor < total {
+        push_chunks(&mut missing, cursor, total.saturating_sub(1));
+    }
+    missing
+}
+
+fn push_chunks(output: &mut Vec<ByteRange>, start: u64, end: u64) {
+    let mut start = start;
+    while start <= end {
+        let chunk_end = start
+            .saturating_add(RANGE_CHUNK_BYTES.saturating_sub(1))
+            .min(end);
+        output.push(ByteRange {
+            start,
+            end: chunk_end,
+        });
+        if chunk_end == u64::MAX {
+            break;
+        }
+        start = chunk_end + 1;
+    }
+}
+
+fn range_worker(
+    tasks: Arc<Mutex<VecDeque<ByteRange>>>,
+    events: Sender<RangeEvent>,
+    context: RangeWorkerContext,
+) {
+    while !context.cancellation.load(Ordering::Relaxed) && !context.stop.load(Ordering::Relaxed) {
+        let task = match tasks.lock() {
+            Ok(mut tasks) => tasks.pop_front(),
+            Err(_) => {
+                let _ = events.send(RangeEvent::Failed(
+                    "download work queue was poisoned".into(),
+                ));
+                return;
+            }
+        };
+        let Some(range) = task else {
+            return;
+        };
+        match download_range(&context, &range) {
+            Ok(true) => {
+                if events.send(RangeEvent::Completed(range)).is_err() {
+                    return;
+                }
+            }
+            Ok(false) => return,
+            Err(error) => {
+                context.stop.store(true, Ordering::Relaxed);
+                let _ = events.send(RangeEvent::Failed(error.to_string()));
+                return;
+            }
+        }
+    }
+}
+
+fn download_range(context: &RangeWorkerContext, range: &ByteRange) -> anyhow::Result<bool> {
+    let mut response = context
+        .client
+        .get(&context.url)
+        .header(
+            reqwest::header::RANGE,
+            format!("bytes={}-{}", range.start, range.end),
+        )
+        .send()?
+        .error_for_status()?;
+    if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        anyhow::bail!("server stopped honoring HTTP range requests");
+    }
+    let content_range = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range);
+    if !matches!(content_range, Some((start, end, total)) if start == range.start && end == range.end && total == context.total)
+    {
+        anyhow::bail!("server returned a different byte range than requested");
+    }
+
+    let mut offset = range.start;
+    let mut buffer = [0_u8; 128 * 1024];
+    while offset <= range.end {
+        if context.cancellation.load(Ordering::Relaxed) || context.stop.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        let read = response.read(&mut buffer)?;
+        if read == 0 {
+            anyhow::bail!("range response ended before all requested bytes arrived");
+        }
+        let remaining = range.end.saturating_sub(offset).saturating_add(1) as usize;
+        if read > remaining {
+            anyhow::bail!("range response exceeded its requested byte span");
+        }
+        let mut output = context
+            .output
+            .lock()
+            .map_err(|_| anyhow::anyhow!("download output file lock was poisoned"))?;
+        output.seek(SeekFrom::Start(offset))?;
+        output.write_all(&buffer[..read])?;
+        offset = offset.saturating_add(read as u64);
+        context.downloaded.fetch_add(read as u64, Ordering::Relaxed);
+    }
+    Ok(true)
 }
 
 fn download_to_path(
