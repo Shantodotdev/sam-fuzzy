@@ -41,7 +41,7 @@ Every release comes bundled as a self-contained executable with the full 104,650
 - 📐 **Streamlined Dual-Pane View**: Minimalist search results list with right-aligned resolution tags alongside an Inspector pane displaying release year, quality, file size, category, server mirror, and directory breadcrumbs with automatic text wrapping.
 - 🌐 **Instant Browser Launch**: Press `Enter` on any title to open its DhakaFlix stream or directory directly in your default browser.
 - 🎥 **MPV / VLC Player Integration**: Press `Alt+P` or `F3` to launch and stream videos directly in your desktop media player.
-- ⬇️ **Resumable Downloads with Live Progress**: Press `Alt+D` or `F6` to download the selected file into your platform Downloads folder. The expanding bottom panel shows byte-level progress, transfer rate, completion, and failures without covering search.
+- ⬇️ **Native Parallel Downloads with Live Progress**: Press `Alt+D` or `F6` to download the selected file into your platform Downloads folder. When a mirror supports HTTP ranges, the Rust binary downloads up to eight file ranges concurrently; the expanding bottom panel shows byte-level progress, transfer rate, completion, and failures without covering search.
 - 📋 **One-Key Clipboard Integration**: Press `Alt+C`, `Ctrl+Y`, or `F2` to copy direct streaming HTTP links directly to your system clipboard.
 - 🗂️ **Categorical Navigation**: Instantly filter across `All`, `English`, `TV Series`, `Korean`, `Hindi`, and `Animation` tabs with `Tab` / `Shift+Tab`.
 
@@ -162,9 +162,9 @@ Options:
 
 ### Downloads
 
-Downloads write to a temporary `.part` file and resume interrupted transfers. When [`aria2c`](https://aria2.github.io/) is available on `PATH`, sam-fuzzy automatically uses it with eight connections per source, split ranges, retries, and resumable control metadata. This gives faster downloads from mirrors that support parallel HTTP ranges. If aria2 is not installed (or unavailable on a machine), the built-in HTTP(S) worker remains the zero-configuration fallback and resumes with HTTP range requests. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media.
+Downloads are handled entirely inside the Rust binary—no separate downloader is required. For a server that honors HTTP byte ranges, sam-fuzzy divides a file into 4 MiB chunks and fetches up to eight chunks concurrently. Finished chunks are recorded beside the temporary `.part` file so an interrupted transfer resumes safely; servers without HTTP range support use the normal single-connection HTTP(S) path. Completed transfers are atomically renamed into the destination folder, so incomplete files are never presented as finished media.
 
-Press `Ctrl+W` to focus the Downloads panel, select an entry with `Alt+J` / `Alt+K`, then press `Alt+C` or `F8` to cancel it; its partial file is retained for a later resume. Multiple files can download concurrently, and each active aria2 transfer manages its own connections independently.
+Press `Ctrl+W` to focus the Downloads panel, select an entry with `Alt+J` / `Alt+K`, then press `Alt+C` or `F8` to cancel it; its partial file is retained for a later resume. Multiple files can download concurrently, and each active download manages its own connections independently.
 
 ---
 
