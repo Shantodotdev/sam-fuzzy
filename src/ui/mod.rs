@@ -31,8 +31,15 @@ pub fn render_ui(f: &mut Frame, app: &App) {
 
     // Responsive footer height:
     // On wide terminals (>= 120 columns), all shortcuts fit on a single row.
-    // On narrower terminals (< 120 columns), allocate 2 rows so all shortcuts remain visible without cutoff.
-    let footer_height = if size.width >= 120 { 1 } else { 2 };
+    // Keep download-pane controls in a dedicated third footer row while that pane is visible.
+    // Otherwise retain the compact one/two-row footer behavior.
+    let footer_height = if app.show_downloads {
+        3 + u16::from(app.active_status().is_some())
+    } else if size.width >= 120 {
+        1
+    } else {
+        2
+    };
     // Keep the main search workspace at least eight rows tall. Any spare vertical space is
     // available to the downloads panel, which adds four rows per visible transfer.
     let fixed_height = 1 + 3 + 1 + footer_height + 8;

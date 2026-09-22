@@ -232,9 +232,17 @@ fn run_app(
                     app.select_prev();
                 }
 
-                // Copy streaming URL to clipboard: Alt+C, Ctrl+Y, Ctrl+L, or F2
-                (KeyModifiers::ALT, KeyCode::Char('c') | KeyCode::Char('C'))
-                | (KeyModifiers::CONTROL, KeyCode::Char('y') | KeyCode::Char('Y'))
+                // Alt+C is contextual: copy in Search focus, cancel in Downloads focus.
+                (KeyModifiers::ALT, KeyCode::Char('c') | KeyCode::Char('C')) => {
+                    if app.is_downloads_focused() {
+                        app.cancel_selected_download();
+                    } else {
+                        app.copy_selected_link();
+                    }
+                }
+
+                // Copy streaming URL to clipboard: Ctrl+Y, Ctrl+L, or F2
+                (KeyModifiers::CONTROL, KeyCode::Char('y') | KeyCode::Char('Y'))
                 | (KeyModifiers::CONTROL, KeyCode::Char('l') | KeyCode::Char('L'))
                 | (_, KeyCode::F(2)) => {
                     app.copy_selected_link();
@@ -256,6 +264,35 @@ fn run_app(
                 // Toggle the bottom download manager panel: F7
                 (_, KeyCode::F(7)) => {
                     app.toggle_downloads();
+                }
+
+                // Switch focus between the search and downloads panes without conflicting
+                // with the desktop's Alt+Tab application switcher.
+                (KeyModifiers::CONTROL, KeyCode::Char('w') | KeyCode::Char('W')) => {
+                    app.toggle_active_pane();
+                }
+
+                // Alt+J/K navigate whichever pane owns focus.
+                (KeyModifiers::ALT, KeyCode::Char('j') | KeyCode::Char('J')) => {
+                    if app.is_downloads_focused() {
+                        app.select_next_download();
+                    } else {
+                        app.select_next();
+                    }
+                }
+                (KeyModifiers::ALT, KeyCode::Char('k') | KeyCode::Char('K')) => {
+                    if app.is_downloads_focused() {
+                        app.select_prev_download();
+                    } else {
+                        app.select_prev();
+                    }
+                }
+
+                // Cancel only when Downloads owns focus, keeping the partial file for resume.
+                (_, KeyCode::F(8)) => {
+                    if app.is_downloads_focused() {
+                        app.cancel_selected_download();
+                    }
                 }
 
                 // Open parent folder listing in web browser: Alt+F or F4

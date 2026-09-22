@@ -21,11 +21,21 @@ pub struct SearchBarWidget<'a> {
 
 impl<'a> Widget for SearchBarWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let focused = self.app.is_search_focused();
+        let title = if focused {
+            Line::from(Span::styled(" FUZZY SEARCH ", style_header()))
+        } else {
+            Line::from(Span::styled(" FUZZY SEARCH ", style_dim()))
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(style_border_focused())
-            .title(Span::styled(" FUZZY SEARCH (fzf-style) ", style_header()));
+            .border_style(if focused {
+                style_border_focused()
+            } else {
+                style_border()
+            })
+            .title(title);
 
         let inner_area = block.inner(area);
         block.render(area, buf);
@@ -116,14 +126,24 @@ impl<'a> Widget for ResultListWidget<'a> {
             } else {
                 self.app.selected_index + 1
             },
-            self.app.results.len()
+            self.app.results.len(),
         );
+        let focused = self.app.is_search_focused();
+        let title = if focused {
+            Line::from(Span::styled(count_title, style_header()))
+        } else {
+            Line::from(Span::styled(count_title, style_dim()))
+        };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(style_border())
-            .title(Span::styled(count_title, style_header()));
+            .border_style(if self.app.is_search_focused() {
+                style_border_focused()
+            } else {
+                style_border()
+            })
+            .title(title);
 
         let inner_area = block.inner(area);
         block.render(area, buf);
@@ -281,24 +301,32 @@ pub struct DownloadsWidget<'a> {
 impl<'a> Widget for DownloadsWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let active = self.app.active_download_count();
-        let title = format!(" DOWNLOADS  •  {active} ACTIVE  •  F7 TO HIDE ");
+        let focused = self.app.is_downloads_focused();
+        let title_text = format!(" DOWNLOADS  •  {active} ACTIVE ");
+        let title = if focused {
+            Line::from(Span::styled(title_text, style_header()))
+        } else {
+            Line::from(Span::styled(title_text, style_dim()))
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .border_style(style_border_focused())
-            .title(Span::styled(title, style_header()));
+            .border_style(if focused {
+                style_border_focused()
+            } else {
+                style_border()
+            })
+            .title(title);
         let inner = block.inner(area);
         block.render(area, buf);
 
         if self.app.downloads.is_empty() {
             Paragraph::new(vec![
-                Line::raw(""),
                 Line::from(Span::styled("  No downloads yet.", style_dim())),
                 Line::from(Span::styled(
                     "  Select a file and press Alt+D or F6 to save it here.",
                     style_dim(),
                 )),
-                Line::raw(""),
                 Line::from(vec![
                     Span::styled("  Target: ", style_header()),
                     Span::styled(
@@ -312,12 +340,26 @@ impl<'a> Widget for DownloadsWidget<'a> {
         }
 
         let max_rows = inner.height as usize / 4;
-        let start = self.app.downloads.len().saturating_sub(max_rows.max(1));
+        let selected = self
+            .app
+            .selected_download_index
+            .min(self.app.downloads.len().saturating_sub(1));
+        let start = selected.min(self.app.downloads.len().saturating_sub(max_rows.max(1)));
         let mut lines = Vec::new();
-        for task in self.app.downloads.iter().skip(start) {
+        for (index, task) in self
+            .app
+            .downloads
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_rows)
+        {
+            let is_selected = index == selected;
             let state = match &task.state {
                 DownloadState::Queued => ("● QUEUED", style_badge_yellow()),
                 DownloadState::Downloading => ("● DOWNLOADING", style_badge_cyan()),
+                DownloadState::Cancelling => ("◌ CANCELLING", style_badge_yellow()),
+                DownloadState::Cancelled => ("■ CANCELLED", style_dim()),
                 DownloadState::Completed => ("✓ COMPLETE", style_badge_green()),
                 DownloadState::Failed(_) => (
                     "✕ FAILED",
@@ -325,8 +367,8 @@ impl<'a> Widget for DownloadsWidget<'a> {
                 ),
             };
             let filename = truncate_text(&task.filename, inner.width.saturating_sub(18) as usize);
-            lines.push(Line::from(vec![
-                Span::styled("  ", style_dim()),
+            let mut name_line = Line::from(vec![
+                Span::styled(if is_selected { " ▶ " } else { "   " }, style_header()),
                 Span::styled(state.0, state.1),
                 Span::styled("  ", style_dim()),
                 Span::styled(
@@ -335,7 +377,11 @@ impl<'a> Widget for DownloadsWidget<'a> {
                         .fg(COLOR_WHITE)
                         .add_modifier(Modifier::BOLD),
                 ),
-            ]));
+            ]);
+            if is_selected {
+                name_line = name_line.style(style_selected_row());
+            }
+            lines.push(name_line);
 
             let bar_width = inner.width.saturating_sub(4) as usize;
             let fraction = task
@@ -375,6 +421,12 @@ impl<'a> Widget for DownloadsWidget<'a> {
                 }
                 DownloadState::Failed(error) => truncate_text(error, bar_width),
                 DownloadState::Completed => format!("{}  •  saved", progress),
+                DownloadState::Cancelled => {
+                    format!("{}  •  partial file retained for resume", progress)
+                }
+                DownloadState::Cancelling => {
+                    format!("{}  •  stopping after current read", progress)
+                }
                 _ => progress,
             };
             lines.push(Line::from(Span::styled(format!("  {detail}"), style_dim())));
@@ -675,6 +727,12 @@ pub fn render_actions_line(width: usize) -> Line<'static> {
         },
     ];
 
+    let show_group = width >= 105;
+    let group_width = if show_group {
+        " MEDIA  ".chars().count()
+    } else {
+        0
+    };
     let chosen = tiers
         .iter()
         .find(|t| {
@@ -692,12 +750,21 @@ pub fn render_actions_line(width: usize) -> Line<'static> {
                     w += spacing;
                 }
             }
-            w <= width
+            w + group_width <= width
         })
         .unwrap_or(&tiers[tiers.len() - 1]);
 
     let sep = if chosen.spacious { "  " } else { " " };
     let mut spans = Vec::with_capacity(ACTION_ITEMS.len() * 3);
+    if show_group {
+        spans.push(Span::styled(
+            " MEDIA  ",
+            Style::default()
+                .fg(COLOR_WHITE)
+                .bg(COLOR_MAROON)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     for (i, item) in ACTION_ITEMS.iter().enumerate() {
         let key = if chosen.use_compact_key {
             item.key_compact
@@ -719,6 +786,23 @@ pub fn render_actions_line(width: usize) -> Line<'static> {
 pub fn render_nav_line(width: usize, status: Option<(&str, bool)>) -> Line<'static> {
     let mut spans = Vec::new();
     let mut status_width = 0;
+    let show_group = width >= 105;
+    let group_width = if show_group {
+        " BROWSE  ".chars().count()
+    } else {
+        0
+    };
+
+    if show_group {
+        spans.push(Span::styled(
+            " BROWSE  ",
+            Style::default()
+                .fg(COLOR_WHITE)
+                .bg(COLOR_MAROON)
+                .add_modifier(Modifier::BOLD),
+        ));
+        status_width += group_width;
+    }
 
     if let Some((status_msg, is_err)) = status {
         let status_style = if is_err {
@@ -729,7 +813,7 @@ pub fn render_nav_line(width: usize, status: Option<(&str, bool)>) -> Line<'stat
                 .add_modifier(Modifier::BOLD)
         };
         let formatted = format!(" {} ", status_msg);
-        status_width = formatted.chars().count() + 3; // + " │ "
+        status_width += formatted.chars().count() + 3; // + " │ "
         spans.push(Span::styled(formatted, status_style));
         spans.push(Span::styled(" │ ", style_dim()));
     }
@@ -801,6 +885,66 @@ pub fn render_nav_line(width: usize, status: Option<(&str, bool)>) -> Line<'stat
         }
     }
 
+    Line::from(spans)
+}
+
+/// Renders the concise, mode-aware download guidance in the lowest footer row.
+pub fn render_download_controls_line(width: usize, downloads_focused: bool) -> Line<'static> {
+    let (group, full, compact) = if downloads_focused {
+        (
+            " DOWNLOADS  ",
+            [
+                ("[F7] ", "Hide panel"),
+                ("[Ctrl+W] ", "Focus search"),
+                ("[Alt+J/K] ", "Select download"),
+                ("[Alt+C/F8] ", "Cancel selected"),
+            ],
+            [
+                ("[F7] ", "Panel"),
+                ("[^W] ", "Search"),
+                ("[A-J/K] ", "Select"),
+                ("[A-C/F8] ", "Cancel"),
+            ],
+        )
+    } else {
+        (
+            " SEARCH  ",
+            [
+                ("[Alt+D/F6] ", "Download selected"),
+                ("[F7] ", "Show panel"),
+                ("[Ctrl+W] ", "Focus downloads"),
+                ("[Alt+J/K] ", "Navigate results"),
+            ],
+            [
+                ("[A-D/F6] ", "Download"),
+                ("[F7] ", "Panel"),
+                ("[^W] ", "Downloads"),
+                ("[A-J/K] ", "Results"),
+            ],
+        )
+    };
+    let full_width = group.chars().count()
+        + full
+            .iter()
+            .map(|(key, label)| key.chars().count() + label.chars().count() + 2)
+            .sum::<usize>();
+    let controls = if full_width <= width { &full } else { &compact };
+
+    let mut spans = Vec::with_capacity(controls.len() * 3 + 1);
+    spans.push(Span::styled(
+        group,
+        Style::default()
+            .fg(COLOR_WHITE)
+            .bg(COLOR_MAROON)
+            .add_modifier(Modifier::BOLD),
+    ));
+    for (index, (key, label)) in controls.iter().enumerate() {
+        spans.push(Span::styled(*key, style_header()));
+        spans.push(Span::styled(*label, Style::default().fg(COLOR_WHITE)));
+        if index + 1 < controls.len() {
+            spans.push(Span::styled("  ", style_dim()));
+        }
+    }
     Line::from(spans)
 }
 
@@ -992,7 +1136,22 @@ impl<'a> Widget for FooterWidget<'a> {
         let width = area.width as usize;
         let status = self.app.active_status();
 
-        let lines = if area.height >= 2 {
+        let lines = if area.height >= 3 {
+            if area.height >= 4 {
+                vec![
+                    render_actions_line(width),
+                    render_nav_line(width, None),
+                    render_download_controls_line(width, self.app.is_downloads_focused()),
+                    render_status_line(width, status),
+                ]
+            } else {
+                vec![
+                    render_actions_line(width),
+                    render_nav_line(width, None),
+                    render_download_controls_line(width, self.app.is_downloads_focused()),
+                ]
+            }
+        } else if area.height >= 2 {
             let line1 = render_actions_line(width);
             let line2 = render_nav_line(width, status);
             vec![line1, line2]
@@ -1002,4 +1161,33 @@ impl<'a> Widget for FooterWidget<'a> {
 
         Paragraph::new(lines).render(area, buf);
     }
+}
+
+/// Renders a transient notification as the final footer row, below all shortcut guidance.
+fn render_status_line(width: usize, status: Option<(&str, bool)>) -> Line<'static> {
+    let Some((message, is_error)) = status else {
+        return Line::raw("");
+    };
+    let badge = if is_error { " ERROR " } else { " NOTICE " };
+    let badge_style = if is_error {
+        Style::default()
+            .fg(COLOR_BG_PANEL)
+            .bg(COLOR_RED)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(COLOR_BG_PANEL)
+            .bg(COLOR_NEON_GREEN)
+            .add_modifier(Modifier::BOLD)
+    };
+    let mut text = message.to_string();
+    let max_message = width.saturating_sub(badge.chars().count() + 3);
+    if text.chars().count() > max_message {
+        text = text.chars().take(max_message.saturating_sub(1)).collect();
+        text.push('…');
+    }
+    Line::from(vec![
+        Span::styled(badge, badge_style),
+        Span::styled(format!("  {text}"), Style::default().fg(COLOR_WHITE)),
+    ])
 }
