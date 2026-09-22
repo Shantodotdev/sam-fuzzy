@@ -23,6 +23,9 @@ pub enum ActionOutcome {
     /// A matching transfer is already managed by the application.
     DownloadAlreadyQueued(String),
 
+    /// A running transfer has been asked to stop.
+    DownloadCancelRequested(String),
+
     /// Action failed with an error description.
     Error(String),
 }
@@ -47,6 +50,9 @@ impl ActionOutcome {
             }
             ActionOutcome::DownloadAlreadyQueued(filename) => {
                 format!("⬇ Already downloading: {filename}")
+            }
+            ActionOutcome::DownloadCancelRequested(filename) => {
+                format!("⬇ Cancelling download: {filename}")
             }
             ActionOutcome::Error(err) => format!("⚠️ {}", err),
         }
@@ -87,7 +93,9 @@ pub fn open_in_browser(url: &str) -> ActionOutcome {
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -119,6 +127,13 @@ pub enum DownloadEvent {
         id: u64,
         /// Human-readable cause.
         error: String,
+    },
+    /// The transfer stopped at the user's request; its partial file remains for resume.
+    Cancelled {
+        /// Application-owned download identifier.
+        id: u64,
+        /// Number of bytes retained in the temporary partial file.
+        downloaded: u64,
     },
 }
 
@@ -154,6 +169,7 @@ pub fn start_download(
     filename: String,
     directory: PathBuf,
     updates: Sender<DownloadEvent>,
+    cancellation: Arc<AtomicBool>,
 ) -> anyhow::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     let destination = available_destination(&directory, &filename);
@@ -163,13 +179,24 @@ pub fn start_download(
     thread::Builder::new()
         .name(format!("download-{id}"))
         .spawn(move || {
-            if let Err(error) =
-                download_to_path(id, &url, &part_path, &worker_destination, &updates)
-            {
-                let _ = updates.send(DownloadEvent::Failed {
-                    id,
-                    error: error.to_string(),
-                });
+            match download_to_path(
+                id,
+                &url,
+                &part_path,
+                &worker_destination,
+                &updates,
+                &cancellation,
+            ) {
+                Ok(Some(downloaded)) => {
+                    let _ = updates.send(DownloadEvent::Cancelled { id, downloaded });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = updates.send(DownloadEvent::Failed {
+                        id,
+                        error: error.to_string(),
+                    });
+                }
             }
         })?;
 
@@ -219,7 +246,13 @@ fn download_to_path(
     part_path: &Path,
     destination: &Path,
     updates: &Sender<DownloadEvent>,
-) -> anyhow::Result<()> {
+    cancellation: &AtomicBool,
+) -> anyhow::Result<Option<u64>> {
+    if cancellation.load(Ordering::Relaxed) {
+        return Ok(Some(
+            fs::metadata(part_path).map(|meta| meta.len()).unwrap_or(0),
+        ));
+    }
     let existing_bytes = fs::metadata(part_path).map(|meta| meta.len()).unwrap_or(0);
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(15))
@@ -230,6 +263,9 @@ fn download_to_path(
         request = request.header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"));
     }
     let mut response = request.send()?.error_for_status()?;
+    if cancellation.load(Ordering::Relaxed) {
+        return Ok(Some(existing_bytes));
+    }
     let resumed = existing_bytes > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
     let starting_bytes = if resumed { existing_bytes } else { 0 };
     let total = response
@@ -258,6 +294,10 @@ fn download_to_path(
     });
     let mut buffer = [0_u8; 128 * 1024];
     loop {
+        if cancellation.load(Ordering::Relaxed) {
+            output.flush()?;
+            return Ok(Some(downloaded));
+        }
         let read = response.read(&mut buffer)?;
         if read == 0 {
             break;
@@ -281,13 +321,16 @@ fn download_to_path(
         downloaded,
         total,
     });
+    if cancellation.load(Ordering::Relaxed) {
+        return Ok(Some(downloaded));
+    }
     fs::rename(part_path, destination)?;
     let _ = updates.send(DownloadEvent::Completed {
         id,
         destination: destination.to_path_buf(),
         downloaded,
     });
-    Ok(())
+    Ok(None)
 }
 
 /// Keeps the in-process clipboard handle alive across invocations.

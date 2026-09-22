@@ -15,6 +15,7 @@ use crate::fuzzy::SearchEngine;
 use crate::models::MediaItem;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -47,10 +48,23 @@ pub enum DownloadState {
     Queued,
     /// Bytes are currently arriving from the source server.
     Downloading,
+    /// A cancellation request is waiting for the worker to finish its current read.
+    Cancelling,
+    /// The download was stopped by the user; its `.part` file can be resumed later.
+    Cancelled,
     /// The completed file was atomically moved into the selected download directory.
     Completed,
     /// The transfer stopped before completion.
     Failed(String),
+}
+
+/// The pane that owns contextual keyboard shortcuts and receives navigation input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivePane {
+    /// The fuzzy search input and results list.
+    Search,
+    /// The bottom downloads progress panel.
+    Downloads,
 }
 
 /// Render-ready state for one file download in the bottom downloads panel.
@@ -70,6 +84,7 @@ pub struct DownloadTask {
     pub total: Option<u64>,
     /// Smoothed most-recent transfer rate in bytes/sec.
     pub bytes_per_second: f64,
+    cancellation: Arc<AtomicBool>,
     last_sample_bytes: u64,
     last_sample_at: Instant,
 }
@@ -77,6 +92,15 @@ pub struct DownloadTask {
 impl DownloadTask {
     /// Creates a newly queued task before its background worker reports progress.
     pub fn queued(id: u64, filename: String, destination: PathBuf) -> Self {
+        Self::queued_with_token(id, filename, destination, Arc::new(AtomicBool::new(false)))
+    }
+
+    fn queued_with_token(
+        id: u64,
+        filename: String,
+        destination: PathBuf,
+        cancellation: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             id,
             filename,
@@ -85,6 +109,7 @@ impl DownloadTask {
             downloaded: 0,
             total: None,
             bytes_per_second: 0.0,
+            cancellation,
             last_sample_bytes: 0,
             last_sample_at: Instant::now(),
         }
@@ -140,6 +165,12 @@ pub struct App {
     /// Recent and active background transfers displayed by the downloads panel.
     pub downloads: Vec<DownloadTask>,
 
+    /// Index of the highlighted entry in the bottom downloads panel.
+    pub selected_download_index: usize,
+
+    /// Which pane receives Alt+J / Alt+K navigation and contextual actions.
+    pub active_pane: ActivePane,
+
     /// Explicit override for sidebar (inspector) visibility.
     /// `None` indicates responsive auto-visibility (visible when width >= 100).
     /// `Some(true)` or `Some(false)` indicates user-toggled manual override.
@@ -175,6 +206,8 @@ impl App {
             show_downloads: false,
             download_dir: default_download_dir(),
             downloads: Vec::new(),
+            selected_download_index: 0,
+            active_pane: ActivePane::Search,
             show_sidebar: None,
             should_quit: false,
             search_tx: None,
@@ -213,7 +246,11 @@ impl App {
                         task.total = total.or(task.total);
                         task.last_sample_bytes = downloaded;
                         task.last_sample_at = Instant::now();
-                        task.state = DownloadState::Downloading;
+                        task.state = if task.cancellation.load(Ordering::Relaxed) {
+                            DownloadState::Cancelling
+                        } else {
+                            DownloadState::Downloading
+                        };
                     }
                 }
                 DownloadEvent::Completed {
@@ -233,6 +270,13 @@ impl App {
                     if let Some(task) = self.downloads.iter_mut().find(|task| task.id == id) {
                         task.bytes_per_second = 0.0;
                         task.state = DownloadState::Failed(error);
+                    }
+                }
+                DownloadEvent::Cancelled { id, downloaded } => {
+                    if let Some(task) = self.downloads.iter_mut().find(|task| task.id == id) {
+                        task.downloaded = downloaded;
+                        task.bytes_per_second = 0.0;
+                        task.state = DownloadState::Cancelled;
                     }
                 }
             }
@@ -255,7 +299,7 @@ impl App {
             task.filename == item.filename
                 && matches!(
                     task.state,
-                    DownloadState::Queued | DownloadState::Downloading
+                    DownloadState::Queued | DownloadState::Downloading | DownloadState::Cancelling
                 )
         }) {
             self.show_downloads = true;
@@ -267,16 +311,23 @@ impl App {
         self.download_counter = self.download_counter.saturating_add(1);
         let id = self.download_counter;
         let filename = item.filename.clone();
+        let cancellation = Arc::new(AtomicBool::new(false));
         match start_download(
             id,
             item.url,
             filename.clone(),
             self.download_dir.clone(),
             self.download_tx.clone(),
+            Arc::clone(&cancellation),
         ) {
             Ok(destination) => {
-                self.downloads
-                    .push(DownloadTask::queued(id, filename, destination.clone()));
+                self.downloads.push(DownloadTask::queued_with_token(
+                    id,
+                    filename,
+                    destination.clone(),
+                    cancellation,
+                ));
+                self.selected_download_index = self.downloads.len().saturating_sub(1);
                 self.show_downloads = true;
                 let outcome = ActionOutcome::DownloadStarted(destination);
                 self.set_status(&outcome.message(), false);
@@ -293,6 +344,77 @@ impl App {
     /// Toggles the bottom downloads progress panel.
     pub fn toggle_downloads(&mut self) {
         self.show_downloads = !self.show_downloads;
+        if !self.show_downloads {
+            self.active_pane = ActivePane::Search;
+        }
+    }
+
+    /// Switches keyboard focus between search and downloads when both panes are available.
+    pub fn toggle_active_pane(&mut self) {
+        if !self.show_downloads || self.downloads.is_empty() {
+            self.active_pane = ActivePane::Search;
+            self.set_status("No downloads available to focus.", false);
+            return;
+        }
+
+        self.active_pane = match self.active_pane {
+            ActivePane::Search => ActivePane::Downloads,
+            ActivePane::Downloads => ActivePane::Search,
+        };
+        let name = match self.active_pane {
+            ActivePane::Search => "Search",
+            ActivePane::Downloads => "Downloads",
+        };
+        self.set_status(&format!("Focus: {name}"), false);
+    }
+
+    /// Returns whether search controls currently own contextual keyboard shortcuts.
+    pub fn is_search_focused(&self) -> bool {
+        self.active_pane == ActivePane::Search
+    }
+
+    /// Returns whether the downloads panel currently owns contextual keyboard shortcuts.
+    pub fn is_downloads_focused(&self) -> bool {
+        self.active_pane == ActivePane::Downloads
+    }
+
+    /// Moves the downloads-panel selection forward, wrapping to the first task.
+    pub fn select_next_download(&mut self) {
+        if !self.downloads.is_empty() {
+            self.selected_download_index =
+                (self.selected_download_index + 1) % self.downloads.len();
+        }
+    }
+
+    /// Moves the downloads-panel selection backward, wrapping to the last task.
+    pub fn select_prev_download(&mut self) {
+        if !self.downloads.is_empty() {
+            self.selected_download_index = if self.selected_download_index == 0 {
+                self.downloads.len() - 1
+            } else {
+                self.selected_download_index - 1
+            };
+        }
+    }
+
+    /// Requests cancellation of the highlighted active transfer.
+    pub fn cancel_selected_download(&mut self) -> Option<ActionOutcome> {
+        let task = self.downloads.get_mut(self.selected_download_index)?;
+        if !matches!(
+            task.state,
+            DownloadState::Queued | DownloadState::Downloading
+        ) {
+            let outcome = ActionOutcome::Error(format!("{} is not downloading.", task.filename));
+            self.set_status(&outcome.message(), true);
+            return Some(outcome);
+        }
+
+        task.cancellation.store(true, Ordering::Relaxed);
+        task.bytes_per_second = 0.0;
+        task.state = DownloadState::Cancelling;
+        let outcome = ActionOutcome::DownloadCancelRequested(task.filename.clone());
+        self.set_status(&outcome.message(), false);
+        Some(outcome)
     }
 
     /// Preferred height for the expandable downloads panel.
@@ -306,6 +428,7 @@ impl App {
         }
 
         let task_rows = self.downloads.len().max(1).saturating_mul(4) as u16;
+        // Two border rows; shortcuts are rendered in the global footer below this panel.
         (task_rows + 2).min(max_height)
     }
 
@@ -316,7 +439,7 @@ impl App {
             .filter(|task| {
                 matches!(
                     task.state,
-                    DownloadState::Queued | DownloadState::Downloading
+                    DownloadState::Queued | DownloadState::Downloading | DownloadState::Cancelling
                 )
             })
             .count()
