@@ -76,6 +76,23 @@ Cancelled downloads keep their partial data and resume state. The app never need
 
 ---
 
+## Agent / scripting CLI
+
+Besides the TUI, `sam-fuzzy` has headless subcommands for scripts and AI agents. Output is JSON when stdout is piped (`--format table|json|jsonl|ids` to override), errors are `{"error": ...}` on stderr with a non-zero exit code.
+
+```bash
+sam-fuzzy categories                                   # filters, counts, vocabularies
+sam-fuzzy search "dark knight" --year 2008 -r 1080p --codec hevc --max-size 5GB --group
+sam-fuzzy search -c Korean --year 2020- --sort size -l 10 --format table
+sam-fuzzy show 51369                                   # full record for one id
+sam-fuzzy download 51369 94053 -o ~/Movies -j 2        # resumable, parallel ranges
+sam-fuzzy search inception -r 1080p --format ids | xargs sam-fuzzy download --dry-run
+```
+
+`search` filters: `--category`, `--year` (`2019`, `2015-2020`, `2015-`), `--resolution`, `--type`, `--codec`, `--source`, `--dual-audio`, `--min-size`, `--max-size`, `--server`, plus `--group`, `--sort relevance|title|year|size`, `--reverse`, `--limit` (max 1000) and `--offset` for paging. `download` supports `--dry-run`, `--skip-existing`, `--jobs 1-4` and `--quiet`, and prints a per-id report (`completed`, `failed`, `exists`, `not_found`, `dry_run`); exit code is 1 if any id failed.
+
+---
+
 ## Keyboard Shortcuts
 
 | Key | Action |

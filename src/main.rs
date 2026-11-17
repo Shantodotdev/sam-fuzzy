@@ -9,7 +9,7 @@
 //! 6. Restores the terminal cleanly upon exit or error.
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
@@ -18,6 +18,7 @@ use crossterm::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use sam_fuzzy::app::App;
+use sam_fuzzy::cli::{self, CategoriesArgs, DownloadArgs, SearchArgs, ShowArgs};
 use sam_fuzzy::fuzzy::SearchEngine;
 use sam_fuzzy::models::{load_dataset, load_embedded_dataset};
 use sam_fuzzy::ui::render_ui;
@@ -31,11 +32,21 @@ use std::time::Duration;
     name = "sam-fuzzy",
     author = "KR Shanto",
     version,
-    about = "Lightning-fast fzf-style TUI for SamOnline FTP media discovery"
+    about = "Lightning-fast fzf-style TUI for SamOnline FTP media discovery",
+    long_about = "Lightning-fast fzf-style TUI for SamOnline FTP media discovery.\n\n\
+        Run without a subcommand to open the interactive TUI. The subcommands are headless and \
+        agent-friendly (JSON on stdout when piped):\n  \
+        sam-fuzzy categories\n  \
+        sam-fuzzy search \"inception\" --resolution 1080p --group\n  \
+        sam-fuzzy download 51369 -o ~/Movies"
 )]
 struct Args {
+    /// Headless command; omit to launch the TUI.
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Custom path to the `sam_media.json` dataset.
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     data: Option<PathBuf>,
 
     /// Initial search query to execute immediately on launch.
@@ -49,6 +60,30 @@ struct Args {
     /// Directory used for downloaded media (defaults to your platform Downloads folder).
     #[arg(short = 'o', long = "downloads-dir")]
     downloads_dir: Option<PathBuf>,
+}
+
+/// Headless, agent-friendly subcommands.
+#[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
+enum Command {
+    /// Search the index with filters and print results (no TUI).
+    Search(SearchArgs),
+    /// Print the full record for one item id.
+    Show(ShowArgs),
+    /// List category filters, dataset categories and filter vocabularies.
+    Categories(CategoriesArgs),
+    /// Download one or more items by id (resumable, parallel ranges).
+    Download(DownloadArgs),
+}
+
+/// Runs a headless subcommand and returns the process exit code.
+fn run_command(command: Command, engine: &SearchEngine) -> anyhow::Result<i32> {
+    match command {
+        Command::Search(a) => cli::run_search(engine, &a).map(|_| 0),
+        Command::Show(a) => cli::run_show(engine, &a).map(|_| 0),
+        Command::Categories(a) => cli::run_categories(engine, &a).map(|_| 0),
+        Command::Download(a) => cli::run_download(engine, &a),
+    }
 }
 
 /// Searches for candidate local dataset files (`.json.gz` or `.json`) on disk.
@@ -144,6 +179,17 @@ fn main() -> anyhow::Result<()> {
 
     // Initialize fuzzy engine and application state
     let engine = SearchEngine::new(items);
+
+    if let Some(command) = args.command {
+        match run_command(command, &engine) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("{}", serde_json::json!({ "error": format!("{error:#}") }));
+                std::process::exit(1);
+            }
+        }
+    }
+
     let mut app = App::new(engine);
 
     if let Some(directory) = args.downloads_dir {

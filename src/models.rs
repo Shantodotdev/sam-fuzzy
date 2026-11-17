@@ -120,6 +120,62 @@ impl MediaItem {
         }
     }
 
+    /// Lowercase file extension of the media file (e.g. "mkv"), if any.
+    pub fn extension(&self) -> Option<String> {
+        if !self.is_file {
+            return None;
+        }
+        self.filename
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+    }
+
+    /// Normalized video codec label: "HEVC", "x264" or "AV1".
+    pub fn codec(&self) -> Option<&'static str> {
+        let text = format!("{} {}", self.quality, self.filename).to_lowercase();
+        if text.contains("hevc") || text.contains("x265") || text.contains("h265") {
+            Some("HEVC")
+        } else if text.contains("av1") {
+            Some("AV1")
+        } else if text.contains("x264") || text.contains("h264") || text.contains("avc") {
+            Some("x264")
+        } else {
+            None
+        }
+    }
+
+    /// Normalized release source: "BluRay", "WEB", "HDTV", "DVD", "HDRip" or "CAM".
+    pub fn source(&self) -> Option<&'static str> {
+        let text = format!("{} {}", self.quality, self.filename).to_lowercase();
+        let has = |keys: &[&str]| keys.iter().any(|k| text.contains(k));
+        if has(&["bluray", "blu-ray", "brrip", "bdrip"]) {
+            Some("BluRay")
+        } else if has(&["webrip", "web-dl", "webdl", "web.dl", "amzn", "nf.web"]) {
+            Some("WEB")
+        } else if has(&["hdtv"]) {
+            Some("HDTV")
+        } else if has(&["dvdrip", "dvd"]) {
+            Some("DVD")
+        } else if has(&["hdrip"]) {
+            Some("HDRip")
+        } else if has(&["hdcam", ".cam.", " cam ", "hdts", "telesync"]) {
+            Some("CAM")
+        } else {
+            None
+        }
+    }
+
+    /// True when the release advertises a dual-audio track.
+    pub fn is_dual_audio(&self) -> bool {
+        let text = format!("{} {}", self.quality, self.filename).to_lowercase();
+        text.contains("dual audio") || text.contains("dual.audio") || text.contains("dual-audio")
+    }
+
+    /// File size in bytes parsed from the human-readable `size` field.
+    pub fn size_bytes(&self) -> Option<u64> {
+        crate::actions::parse_size_hint(self.size.as_deref())
+    }
+
     /// Extracts a normalized resolution label (e.g. "4K", "1080p", "720p", "576p", "480p", "360p")
     /// from the item's quality profile or physical filename.
     pub fn clean_resolution(&self) -> Option<&'static str> {

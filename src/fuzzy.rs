@@ -97,20 +97,64 @@ impl SearchEngine {
         category: &str,
         limit: usize,
     ) -> Vec<SearchResult<'a>> {
+        let mut ranked = self.rank(query, category, &|_| true);
+        ranked.truncate(limit);
+
+        // Compute character highlight indices only for the visible results
+        let trimmed_query = query.trim();
+        let pattern = Pattern::parse(trimmed_query, CaseMatching::Ignore, Normalization::Smart);
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let mut utf32_buf = Vec::new();
+        let mut results = Vec::with_capacity(ranked.len());
+        for (idx, score) in ranked {
+            let mut indices = Vec::new();
+            if !trimmed_query.is_empty() {
+                let utf32 = Utf32Str::new(&self.haystacks[idx], &mut utf32_buf);
+                pattern.indices(utf32, &mut matcher, &mut indices);
+            }
+            results.push(SearchResult {
+                item: &self.items[idx],
+                score,
+                indices,
+            });
+        }
+        results
+    }
+
+    /// Ranks every item matching `query`, `category` and the extra `predicate`, best first.
+    ///
+    /// Returns `(item, score)` pairs without highlight indices, so it stays cheap even when
+    /// the match set is the whole index. Used by the non-interactive agent CLI.
+    pub fn search_with<'a, F>(
+        &'a self,
+        query: &str,
+        category: &str,
+        predicate: &F,
+    ) -> Vec<(&'a MediaItem, u64)>
+    where
+        F: Fn(&MediaItem) -> bool + Sync,
+    {
+        self.rank(query, category, predicate)
+            .into_iter()
+            .map(|(idx, score)| (&self.items[idx], score))
+            .collect()
+    }
+
+    /// Scores and sorts all matching item indices (best first).
+    fn rank<F>(&self, query: &str, category: &str, predicate: &F) -> Vec<(usize, u64)>
+    where
+        F: Fn(&MediaItem) -> bool + Sync,
+    {
         let trimmed_query = query.trim();
 
-        // Fast path: When query is empty, return category items immediately without running fuzzy matcher
+        // Fast path: an empty query returns every filtered item in natural order
         if trimmed_query.is_empty() {
             return self
                 .items
                 .iter()
-                .filter(|item| item.matches_category(category))
-                .take(limit)
-                .map(|item| SearchResult {
-                    item,
-                    score: 0,
-                    indices: Vec::new(),
-                })
+                .enumerate()
+                .filter(|(_, item)| item.matches_category(category) && predicate(item))
+                .map(|(idx, _)| (idx, 0))
                 .collect();
         }
 
@@ -127,7 +171,7 @@ impl SearchEngine {
                 || (Matcher::new(Config::DEFAULT), Vec::new()),
                 |(matcher, utf32_buf), idx| {
                     let item = &self.items[idx];
-                    if !item.matches_category(category) {
+                    if !item.matches_category(category) || !predicate(item) {
                         return None;
                     }
 
@@ -208,28 +252,6 @@ impl SearchEngine {
 
         // Rank by composite score descending, using natural ascending dataset index as tie-breaker
         matches.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
-        // Truncate to maximum visible results before computing highlight indices
-        if matches.len() > limit {
-            matches.truncate(limit);
-        }
-
-        // Phase 2: Compute character highlight indices only for the top visible results
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let mut utf32_buf = Vec::new();
-        let mut results = Vec::with_capacity(matches.len());
-        for (idx, score) in matches {
-            let haystack = &self.haystacks[idx];
-            let utf32 = Utf32Str::new(haystack, &mut utf32_buf);
-            let mut indices = Vec::new();
-            pattern.indices(utf32, &mut matcher, &mut indices);
-            results.push(SearchResult {
-                item: &self.items[idx],
-                score,
-                indices,
-            });
-        }
-
-        results
+        matches
     }
 }

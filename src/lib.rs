@@ -12,6 +12,7 @@
 
 pub mod actions;
 pub mod app;
+pub mod cli;
 pub mod fuzzy;
 pub mod models;
 pub mod ui;
